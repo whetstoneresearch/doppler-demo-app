@@ -1,7 +1,7 @@
 import { useParams, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { GraphQLClient } from "graphql-request"
-import { Pool } from "@/utils/graphql"
+import { Pool, type PoolKey } from "@/utils/graphql"
 import { Address, formatEther, formatUnits, Hex, maxUint256, parseAbi, parseEther, parseUnits, zeroAddress } from "viem"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -116,6 +116,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 // V4 Dynamic Fee Flag - indicates a pool uses dynamic fees
 const DYNAMIC_FEE_FLAG = 0x800000 // 8388608 in decimal
+
+type ResolvedPoolKey = {
+  currency0: Address
+  currency1: Address
+  fee: number
+  tickSpacing: number
+  hooks: Address
+}
 
 // Universal Router action constants used when settling from router balance
 const CONTRACT_BALANCE = BigInt("0x8000000000000000000000000000000000000000000000000000000000000000")
@@ -318,25 +326,33 @@ export default function PoolDetails() {
         }
       })()
 
-      const normalizedPoolKey = (indexerPoolKey && typeof indexerPoolKey === 'object'
+      const normalizedPoolKey: PoolKey | undefined = (indexerPoolKey && typeof indexerPoolKey === 'object'
         && 'currency0' in indexerPoolKey && 'currency1' in indexerPoolKey)
-        ? {
-            currency0: (indexerPoolKey as any).currency0 as string,
-            currency1: (indexerPoolKey as any).currency1 as string,
-            fee: (() => {
+        ? (() => {
+            const parsedFee = (() => {
               const raw = (indexerPoolKey as any).fee
               if (raw === undefined || raw === null) return undefined
               const value = typeof raw === 'number' ? raw : Number(raw)
               return Number.isFinite(value) ? value : undefined
-            })(),
-            tickSpacing: (() => {
+            })()
+            const parsedTickSpacing = (() => {
               const raw = (indexerPoolKey as any).tickSpacing
               if (raw === undefined || raw === null) return undefined
               const value = typeof raw === 'number' ? raw : Number(raw)
               return Number.isFinite(value) ? value : undefined
-            })(),
-            hooks: (indexerPoolKey as any).hooks as string | undefined,
-          }
+            })()
+            const fallbackFee = typeof p.fee === 'number' ? p.fee : Number(p.fee ?? DYNAMIC_FEE_FLAG)
+            const fallbackTickSpacing = typeof (p as any).tickSpacing === 'number'
+              ? (p as any).tickSpacing
+              : Number((p as any).tickSpacing ?? 2)
+            return {
+              currency0: (indexerPoolKey as any).currency0 as string,
+              currency1: (indexerPoolKey as any).currency1 as string,
+              fee: parsedFee ?? (Number.isFinite(fallbackFee) ? fallbackFee : DYNAMIC_FEE_FLAG),
+              tickSpacing: parsedTickSpacing ?? (Number.isFinite(fallbackTickSpacing) ? fallbackTickSpacing : 2),
+              hooks: ((indexerPoolKey as any).hooks as string | undefined) ?? (p as any).hooks ?? p.address,
+            }
+          })()
         : undefined
 
       // For V4 dynamic auctions, derive currency0 and currency1 from baseToken/quoteToken
@@ -889,7 +905,7 @@ export default function PoolDetails() {
     ) as Address | undefined
   }
 
-  const resolvePoolKey = () => {
+  const resolvePoolKey = (): ResolvedPoolKey | null => {
     if (!pool?.poolKey?.currency0 || !pool.poolKey?.currency1) return null
     const feeRaw = pool.poolKey.fee ?? pool.fee ?? DYNAMIC_FEE_FLAG
     const feeParsed = typeof feeRaw === 'number' ? feeRaw : Number(feeRaw)
