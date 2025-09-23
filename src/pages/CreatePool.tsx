@@ -4,8 +4,8 @@ import { useState, useEffect } from "react"
 import { useAccount, useWalletClient, usePublicClient } from "wagmi"
 import { getAddresses } from "@whetstone-research/doppler-sdk"
 import { DopplerSDK, StaticAuctionBuilder, DynamicAuctionBuilder } from "@whetstone-research/doppler-sdk"
-import { parseEther, formatEther, decodeEventLog, type Address } from "viem"
-import { CommandBuilder, SwapRouter02Encoder } from "doppler-router"
+import { parseEther, formatEther, decodeEventLog, type Address, type Hex } from "viem"
+import { CommandBuilder, SwapRouter02Encoder, V4ActionBuilder, V4ActionType } from "doppler-router"
 import { getBlock } from "viem/actions"
 import { airlockAbi } from "@whetstone-research/doppler-sdk"
 import { MulticurveConfigForm, defaultMulticurveState, type MulticurveFormState, AIRLOCK_OWNER_SHARE } from "../components/MulticurveConfigForm"
@@ -38,6 +38,9 @@ export default function CreatePool() {
   const [isDoppler404, setIsDoppler404] = useState(false)
   const [enableBundlePrebuy, setEnableBundlePrebuy] = useState(false)
   const [prebuyPercent, setPrebuyPercent] = useState<string>('1')
+  const [enableMulticurveBundlePrebuy, setEnableMulticurveBundlePrebuy] = useState(false)
+  const [multicurvePrebuyPercent, setMulticurvePrebuyPercent] = useState('1')
+  const [multicurveHookData, setMulticurveHookData] = useState<string>('0x')
   const [deploymentResult, setDeploymentResult] = useState<{
     tokenAddress: string
     nftAddress?: string
@@ -61,6 +64,9 @@ export default function CreatePool() {
   // DN404: number of ERC20 base units represented per NFT.
   // We want 1 NFT = 1,000 tokens; tokens have 18 decimals, so use 1000e18.
   const DN404_UNIT = parseEther('1000')
+  const CONTRACT_BALANCE = BigInt('0x8000000000000000000000000000000000000000000000000000000000000000')
+
+  const isValidHexData = (value: string) => /^0x(?:[0-9a-fA-F]{2})*$/.test(value.trim())
 
   const auctionLabel = auctionType === 'static' ? 'Static' : auctionType === 'dynamic' ? 'Dynamic' : 'Multicurve'
 
@@ -456,9 +462,112 @@ export default function CreatePool() {
           .withIntegrator(account.address)
           .build();
 
-        const { asset, pool } = await factory.simulateCreateMulticurve(multicurveParams);
+        const { createParams, asset, pool } = await factory.simulateCreateMulticurve(multicurveParams);
         console.log('Predicted multicurve token address:', asset);
         console.log('Predicted multicurve pool address:', pool);
+
+        if (enableMulticurveBundlePrebuy) {
+          const pctNum = Number(multicurvePrebuyPercent || '0');
+          const pct = Number.isFinite(pctNum) ? Math.max(0, Math.min(100, Math.floor(pctNum))) : 0;
+          const amountOut = (multicurveParams.sale.numTokensToSell * BigInt(pct)) / 100n;
+
+          if (amountOut <= 0n) {
+            throw new Error('Pre-buy percent must be greater than 0');
+          }
+
+          const hookDataInput = (multicurveHookData.trim() || '0x');
+          if (!isValidHexData(hookDataInput)) {
+            throw new Error('Hook data must be valid hex prefixed with 0x');
+          }
+          if (hookDataInput.length % 2 !== 0) {
+            throw new Error('Hook data hex length must be even');
+          }
+
+          const hookData = hookDataInput as Hex;
+
+          console.log('[BUNDLE PREBUY][Multicurve] createParams:', createParams);
+          console.log('[BUNDLE PREBUY][Multicurve] predicted asset:', asset);
+          console.log('[BUNDLE PREBUY][Multicurve] predicted pool:', pool);
+          console.log('[BUNDLE PREBUY][Multicurve] numTokensToSell:', multicurveParams.sale.numTokensToSell.toString());
+          console.log('[BUNDLE PREBUY][Multicurve] prebuy percent:', pct, '%');
+          console.log('[BUNDLE PREBUY][Multicurve] target amountOut:', amountOut.toString());
+          console.log('[BUNDLE PREBUY][Multicurve] hookData:', hookData);
+
+          const quote = await factory.simulateMulticurveBundleExactOut(createParams, {
+            exactAmountOut: amountOut,
+            hookData,
+          });
+
+          console.log('[BUNDLE PREBUY][Multicurve] bundler quote:', quote);
+
+          if (quote.asset.toLowerCase() !== asset.toLowerCase()) {
+            console.warn('[BUNDLE PREBUY][Multicurve] Asset mismatch between create simulation and bundler quote:', quote.asset, asset);
+          }
+
+          const amountIn = quote.amountIn;
+          console.log('[BUNDLE PREBUY][Multicurve] required amountIn (wei):', amountIn.toString());
+          console.log('[BUNDLE PREBUY][Multicurve] required amountIn (ETH):', formatEther(amountIn));
+
+          try {
+            const cross = await factory.simulateMulticurveBundleExactIn(createParams, {
+              exactAmountIn: amountIn,
+              hookData,
+            });
+            console.log('[BUNDLE PREBUY][Multicurve][cross-check] amountOut for amountIn:', cross.amountOut.toString());
+          } catch (crossError) {
+            console.warn('[BUNDLE PREBUY][Multicurve][cross-check] exact-in simulation failed:', crossError);
+          }
+
+          const numeraire = createParams.numeraire as Address;
+          const zeroForOne = quote.poolKey.currency0.toLowerCase() === numeraire.toLowerCase();
+          const universalRouter = addresses.universalRouter as Address;
+
+          const actionBuilder = new V4ActionBuilder();
+          const [actions, params] = actionBuilder
+            .addAction(V4ActionType.SETTLE, [numeraire, CONTRACT_BALANCE, false])
+            .addSwapExactOutSingle(quote.poolKey, zeroForOne, amountOut, amountIn, hookData)
+            .addAction(V4ActionType.TAKE_ALL, [quote.asset, 0])
+            .addAction(V4ActionType.TAKE_ALL, [numeraire, 0])
+            .build();
+
+          const builder = new CommandBuilder();
+          builder.addWrapEth(universalRouter, amountIn);
+          builder.addV4Swap(actions, params);
+          builder.addSweep(quote.asset, account.address as Address, 0n);
+          builder.addSweep(numeraire, account.address as Address, 0n);
+          const [commands, inputs] = builder.build();
+
+          const txHash = await factory.bundle(createParams, commands, inputs, { value: amountIn });
+
+          console.log(`${isDoppler404 ? 'Doppler404 ' : ''}multicurve auction (bundled pre-buy) submitted!`);
+          console.log('Transaction hash:', txHash);
+          console.log('Predicted token address:', asset);
+          console.log('Predicted pool address:', pool);
+
+          let nftAddress: Address | undefined;
+          if (isDoppler404) {
+            try {
+              nftAddress = await publicClient.readContract({
+                address: asset as Address,
+                abi: dn404Abi,
+                functionName: 'mirrorERC721',
+              });
+            } catch (error) {
+              console.error('Failed to fetch Doppler404 mirror address for multicurve bundle:', error);
+            }
+          }
+
+          setDeploymentResult({
+            tokenAddress: asset as string,
+            nftAddress,
+            poolAddress: pool as string,
+            hookAddress: quote.poolKey.hooks,
+            transactionHash: txHash as string,
+            auctionType: 'multicurve',
+          });
+
+          return;
+        }
 
         const result = await factory.createMulticurve(multicurveParams);
         console.log(`${isDoppler404 ? 'Doppler404 ' : ''}multicurve auction deployment submitted!`);
@@ -707,6 +816,59 @@ export default function CreatePool() {
                     <p className="text-xs text-muted-foreground">
                       We will simulate the required ETH and execute an exact-output V3 swap during creation.
                     </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {auctionType === 'multicurve' && (
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="bundlePrebuyMulticurve"
+                    checked={enableMulticurveBundlePrebuy}
+                    onChange={(e) => setEnableMulticurveBundlePrebuy(e.target.checked)}
+                    className="w-4 h-4 rounded border-input text-primary focus:ring-primary"
+                  />
+                  <label htmlFor="bundlePrebuyMulticurve" className="text-sm font-medium cursor-pointer">
+                    Pre-buy via bundling (multicurve auctions)
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Bundle the initializer deployment with a Uniswap V4 purchase during the same transaction.
+                </p>
+                {enableMulticurveBundlePrebuy && (
+                  <div className="space-y-3 pl-6">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">Pre-buy percent of tokens for sale</label>
+                      <input
+                        type="number"
+                        value={multicurvePrebuyPercent}
+                        onChange={(e) => setMulticurvePrebuyPercent(e.target.value)}
+                        className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
+                        placeholder="e.g., 1"
+                        min="1"
+                        max="100"
+                        step="1"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        We pass this percentage to the bundler simulator to request an exact-output quote.
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">Hook data (hex, optional)</label>
+                      <input
+                        type="text"
+                        value={multicurveHookData}
+                        onChange={(e) => setMulticurveHookData(e.target.value)}
+                        className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
+                        placeholder="0x"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Defaults to 0x. Provide encoded hook data if your initializer requires custom parameters.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>

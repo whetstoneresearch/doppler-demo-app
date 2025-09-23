@@ -39,10 +39,10 @@ export interface MulticurveFormState {
 
 export const defaultMulticurveState: MulticurveFormState = {
   fee: "0",
-  tickSpacing: "8",
+  tickSpacing: "10",
   curves: [
-    { tickLower: "0", tickUpper: "240000", numPositions: "10", shares: "0.5" },
-    { tickLower: "16000", tickUpper: "240000", numPositions: "10", shares: "0.5" },
+    { tickLower: "-240000", tickUpper: "0", numPositions: "10", shares: "0.5" },
+    { tickLower: "-120000", tickUpper: "0", numPositions: "10", shares: "0.5" },
   ],
   enableLock: false,
   beneficiaries: [],
