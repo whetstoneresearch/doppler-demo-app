@@ -129,7 +129,7 @@ type ResolvedPoolKey = {
 const CONTRACT_BALANCE = BigInt("0x8000000000000000000000000000000000000000000000000000000000000000")
 const OPEN_DELTA = 0n
 
-const client = new GraphQLClient("https://multicurve-testnet.marble.live/")
+const client = new GraphQLClient("https://testnet-indexer.doppler.lol/")
 
 const GET_POOL_QUERY = `
   query GetPool($address: String!, $chainId: Float!) {

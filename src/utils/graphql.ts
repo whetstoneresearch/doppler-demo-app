@@ -1,7 +1,7 @@
 import { GraphQLClient } from "graphql-request";
 
 // Initialize GraphQL client
-const client = new GraphQLClient("https://multicurve-testnet.marble.live/");
+const client = new GraphQLClient("https://testnet-indexer.doppler.lol/");
 // const client = new GraphQLClient("http://localhost:42069/");
 
 // Token type definition
