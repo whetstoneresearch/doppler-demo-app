@@ -38,12 +38,14 @@ export interface MulticurveFormState {
 }
 
 export const defaultMulticurveState: MulticurveFormState = {
-  fee: "0",
-  tickSpacing: "10",
-  curves: [
-    { tickLower: "-240000", tickUpper: "0", numPositions: "10", shares: "0.5" },
-    { tickLower: "-120000", tickUpper: "0", numPositions: "10", shares: "0.5" },
-  ],
+  fee: "3000",
+  tickSpacing: "8",
+  curves: Array.from({ length: 10 }, (_, index) => ({
+    tickLower: String(160_000 + index * 8),
+    tickUpper: "240000",
+    numPositions: "10",
+    shares: "0.1",
+  })),
   enableLock: false,
   beneficiaries: [],
 }
@@ -117,16 +119,18 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
   }
 
   const addCurve = () => {
-    const last = value.curves[value.curves.length - 1]
     const spacing = Number(value.tickSpacing)
-    const next: CurveInput = last
-      ? {
-          tickLower: last.tickUpper,
-          tickUpper: String(Number.parseInt(last.tickUpper || "0", 10) + 16000),
-          numPositions: last.numPositions,
-          shares: last.shares,
-        }
-      : { tickLower: "0", tickUpper: "160000", numPositions: "8", shares: "0.1" }
+    const last = value.curves[value.curves.length - 1]
+    const resolvedSpacing = isValidTickSpacing(spacing) ? spacing : 8
+    const lastLower = Number.parseInt(last?.tickLower ?? String(160_000 - resolvedSpacing), 10)
+    const nextLower = Number.isFinite(lastLower) ? lastLower + resolvedSpacing : 160_000
+
+    const next: CurveInput = {
+      tickLower: String(nextLower),
+      tickUpper: last?.tickUpper ?? "240000",
+      numPositions: last?.numPositions ?? "10",
+      shares: last?.shares ?? "0.1",
+    }
 
     if (isValidTickSpacing(spacing)) {
       next.tickLower = alignTickInput(next.tickLower, spacing)
