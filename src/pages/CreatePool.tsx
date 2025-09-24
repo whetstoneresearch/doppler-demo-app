@@ -493,9 +493,12 @@ export default function CreatePool() {
           console.log('[BUNDLE PREBUY][Multicurve] target amountOut:', amountOut.toString());
           console.log('[BUNDLE PREBUY][Multicurve] hookData:', hookData);
 
+          if (hookData !== '0x') {
+            console.warn('[BUNDLE PREBUY][Multicurve] Custom hookData not currently supported in SDK simulations; defaulting to 0x');
+          }
+
           const quote = await factory.simulateMulticurveBundleExactOut(createParams, {
             exactAmountOut: amountOut,
-            hookData,
           });
 
           console.log('[BUNDLE PREBUY][Multicurve] bundler quote:', quote);
@@ -511,7 +514,6 @@ export default function CreatePool() {
           try {
             const cross = await factory.simulateMulticurveBundleExactIn(createParams, {
               exactAmountIn: amountIn,
-              hookData,
             });
             console.log('[BUNDLE PREBUY][Multicurve][cross-check] amountOut for amountIn:', cross.amountOut.toString());
           } catch (crossError) {
