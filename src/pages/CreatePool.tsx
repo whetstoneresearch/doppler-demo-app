@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { useAccount, useWalletClient, usePublicClient } from "wagmi"
 import { getAddresses } from "@whetstone-research/doppler-sdk"
 import { DopplerSDK, StaticAuctionBuilder, DynamicAuctionBuilder } from "@whetstone-research/doppler-sdk"
-import { parseEther, formatEther, decodeEventLog, type Address, type Hex } from "viem"
+import { parseEther, formatEther, decodeEventLog, type Address } from "viem"
 import { CommandBuilder, SwapRouter02Encoder, V4ActionBuilder, V4ActionType } from "doppler-router"
 import { getBlock } from "viem/actions"
 import { airlockAbi } from "@whetstone-research/doppler-sdk"
@@ -40,7 +40,6 @@ export default function CreatePool() {
   const [prebuyPercent, setPrebuyPercent] = useState<string>('1')
   const [enableMulticurveBundlePrebuy, setEnableMulticurveBundlePrebuy] = useState(false)
   const [multicurvePrebuyPercent, setMulticurvePrebuyPercent] = useState('1')
-  const [multicurveHookData, setMulticurveHookData] = useState<string>('0x')
   const [deploymentResult, setDeploymentResult] = useState<{
     tokenAddress: string
     nftAddress?: string
@@ -65,8 +64,6 @@ export default function CreatePool() {
   // We want 1 NFT = 1,000 tokens; tokens have 18 decimals, so use 1000e18.
   const DN404_UNIT = parseEther('1000')
   const CONTRACT_BALANCE = BigInt('0x8000000000000000000000000000000000000000000000000000000000000000')
-
-  const isValidHexData = (value: string) => /^0x(?:[0-9a-fA-F]{2})*$/.test(value.trim())
 
   const auctionLabel = auctionType === 'static' ? 'Static' : auctionType === 'dynamic' ? 'Dynamic' : 'Multicurve'
 
@@ -475,27 +472,12 @@ export default function CreatePool() {
             throw new Error('Pre-buy percent must be greater than 0');
           }
 
-          const hookDataInput = (multicurveHookData.trim() || '0x');
-          if (!isValidHexData(hookDataInput)) {
-            throw new Error('Hook data must be valid hex prefixed with 0x');
-          }
-          if (hookDataInput.length % 2 !== 0) {
-            throw new Error('Hook data hex length must be even');
-          }
-
-          const hookData = hookDataInput as Hex;
-
           console.log('[BUNDLE PREBUY][Multicurve] createParams:', createParams);
           console.log('[BUNDLE PREBUY][Multicurve] predicted asset:', asset);
           console.log('[BUNDLE PREBUY][Multicurve] predicted pool:', pool);
           console.log('[BUNDLE PREBUY][Multicurve] numTokensToSell:', multicurveParams.sale.numTokensToSell.toString());
           console.log('[BUNDLE PREBUY][Multicurve] prebuy percent:', pct, '%');
           console.log('[BUNDLE PREBUY][Multicurve] target amountOut:', amountOut.toString());
-          console.log('[BUNDLE PREBUY][Multicurve] hookData:', hookData);
-
-          if (hookData !== '0x') {
-            console.warn('[BUNDLE PREBUY][Multicurve] Custom hookData not currently supported in SDK simulations; defaulting to 0x');
-          }
 
           const quote = await factory.simulateMulticurveBundleExactOut(createParams, {
             exactAmountOut: amountOut,
@@ -524,6 +506,7 @@ export default function CreatePool() {
           const zeroForOne = quote.poolKey.currency0.toLowerCase() === numeraire.toLowerCase();
           const universalRouter = addresses.universalRouter as Address;
 
+          const hookData: `0x${string}` = '0x';
           const actionBuilder = new V4ActionBuilder();
           const [actions, params] = actionBuilder
             .addAction(V4ActionType.SETTLE, [numeraire, CONTRACT_BALANCE, false])
@@ -856,19 +839,6 @@ export default function CreatePool() {
                       />
                       <p className="text-xs text-muted-foreground">
                         We pass this percentage to the bundler simulator to request an exact-output quote.
-                      </p>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium">Hook data (hex, optional)</label>
-                      <input
-                        type="text"
-                        value={multicurveHookData}
-                        onChange={(e) => setMulticurveHookData(e.target.value)}
-                        className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
-                        placeholder="0x"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Defaults to 0x. Provide encoded hook data if your initializer requires custom parameters.
                       </p>
                     </div>
                   </div>
