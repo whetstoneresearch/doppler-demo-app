@@ -57,8 +57,17 @@ export default function CreatePool() {
     tokenSymbol: '',
     tokenURI: '',
     baseURI: '',
-    totalSupply: '10000000',
+    totalSupply: '1000000000',
   })
+  const [hasCustomTotalSupply, setHasCustomTotalSupply] = useState(false)
+
+  const nftSupplyDisplay = (() => {
+    if (!isDoppler404) return null
+    const parsed = Number(formData.totalSupply)
+    if (!Number.isFinite(parsed) || parsed <= 0) return '0'
+    return Math.floor(parsed / 1000).toLocaleString()
+  })()
+  const showLiquidityReserveNote = auctionType !== 'multicurve'
 
   // DN404: number of ERC20 base units represented per NFT.
   // We want 1 NFT = 1,000 tokens; tokens have 18 decimals, so use 1000e18.
@@ -66,6 +75,20 @@ export default function CreatePool() {
   const CONTRACT_BALANCE = BigInt('0x8000000000000000000000000000000000000000000000000000000000000000')
 
   const auctionLabel = auctionType === 'static' ? 'Static' : auctionType === 'dynamic' ? 'Dynamic' : 'Multicurve'
+  const defaultTotalSupplyForAuction = auctionType === 'multicurve' ? '1000000' : '1000000000'
+
+  const handleAuctionTypeChange = (nextType: 'static' | 'dynamic' | 'multicurve') => {
+    setAuctionType(nextType)
+
+    if (hasCustomTotalSupply) return
+
+    const nextDefault = nextType === 'multicurve' ? '1000000' : '1000000000'
+    setHasCustomTotalSupply(false)
+    setFormData(prev => {
+      if (prev.totalSupply === nextDefault) return prev
+      return { ...prev, totalSupply: nextDefault }
+    })
+  }
 
   useEffect(() => {
     if (!publicClient) return
@@ -136,14 +159,40 @@ export default function CreatePool() {
         setAirlockOwnerAddress(airlockOwner)
       }
       
-      // Calculate token supply based on whether it's Doppler404
-      const totalSupply = isDoppler404 
-        ? parseEther(formData.totalSupply) // For DN404, this is the token supply in base units
-        : parseEther("1000000000"); // 1 billion for regular tokens
-      
-      const numTokensToSell = isDoppler404
-        ? (totalSupply * 9n) / 10n // 90% for DN404
-        : parseEther("900000000"); // 900 million for regular tokens
+      const totalSupplyInput = formData.totalSupply.trim()
+      if (totalSupplyInput.length === 0) {
+        throw new Error('Total supply is required')
+      }
+
+      if (isDoppler404) {
+        if (totalSupplyInput.includes('.')) {
+          throw new Error('Doppler404 total supply must be a whole number divisible by 1,000')
+        }
+
+        try {
+          const integerSupply = BigInt(totalSupplyInput)
+          if (integerSupply % 1000n !== 0n) {
+            throw new Error('Doppler404 total supply must be divisible by 1,000')
+          }
+        } catch (error) {
+          throw new Error('Invalid Doppler404 total supply')
+        }
+      }
+
+      let totalSupply: bigint
+      try {
+        totalSupply = parseEther(totalSupplyInput)
+      } catch (error) {
+        throw new Error('Invalid total supply amount')
+      }
+
+      if (totalSupply <= 0n) {
+        throw new Error('Total supply must be greater than zero')
+      }
+
+      const numTokensToSell = auctionType === 'multicurve'
+        ? totalSupply
+        : (totalSupply * 9n) / 10n
       
       // Handle both static and dynamic auctions using the new builder pattern
       if (auctionType === 'static') {
@@ -707,7 +756,7 @@ export default function CreatePool() {
               <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
                 <button
                   type="button"
-                  onClick={() => setAuctionType('static')}
+                  onClick={() => handleAuctionTypeChange('static')}
                   className={`flex-1 px-4 py-2 rounded-md transition-colors ${
                     auctionType === 'static' 
                       ? 'bg-primary text-primary-foreground' 
@@ -718,7 +767,7 @@ export default function CreatePool() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAuctionType('dynamic')}
+                  onClick={() => handleAuctionTypeChange('dynamic')}
                   className={`flex-1 px-4 py-2 rounded-md transition-colors ${
                     auctionType === 'dynamic' 
                       ? 'bg-primary text-primary-foreground' 
@@ -729,7 +778,7 @@ export default function CreatePool() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAuctionType('multicurve')}
+                  onClick={() => handleAuctionTypeChange('multicurve')}
                   className={`flex-1 px-4 py-2 rounded-md transition-colors ${
                     auctionType === 'multicurve'
                       ? 'bg-primary text-primary-foreground'
@@ -898,48 +947,61 @@ export default function CreatePool() {
             )}
             
             {isDoppler404 && (
-              <>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Base URI</label>
-                  <input 
-                    type="text"
-                    value={formData.baseURI}
-                    onChange={(e) => setFormData(prev => ({ ...prev, baseURI: e.target.value }))}
-                    className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
-                    placeholder="e.g., https://metadata.example.com/cool/"
-                    required={isDoppler404}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    The base URI for NFT metadata. Token IDs will be appended to this.
-                  </p>
-                </div>
-                
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Total Token Supply</label>
-                  <input 
-                    type="number"
-                    value={formData.totalSupply}
-                    onChange={(e) => setFormData(prev => ({ ...prev, totalSupply: e.target.value }))}
-                    className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
-                    placeholder="e.g., 10000000"
-                    min="1000"
-                    step="1000"
-                    required={isDoppler404}
-                  />
-                  <div className="space-y-1">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Base URI</label>
+                <input 
+                  type="text"
+                  value={formData.baseURI}
+                  onChange={(e) => setFormData(prev => ({ ...prev, baseURI: e.target.value }))}
+                  className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
+                  placeholder="e.g., https://metadata.example.com/cool/"
+                  required={isDoppler404}
+                />
+                <p className="text-xs text-muted-foreground">
+                  The base URI for NFT metadata. Token IDs will be appended to this.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Total Token Supply</label>
+              <input 
+                type="number"
+                inputMode="decimal"
+                value={formData.totalSupply}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setFormData(prev => ({ ...prev, totalSupply: value }))
+                  setHasCustomTotalSupply(value.trim() !== defaultTotalSupplyForAuction)
+                }}
+                className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
+                placeholder={isDoppler404 || auctionType === 'multicurve' ? "e.g., 1000000" : "e.g., 1000000000"}
+                min={isDoppler404 ? 1000 : 0}
+                step={isDoppler404 ? 1000 : 'any'}
+                required
+              />
+              <div className="space-y-1">
+                {isDoppler404 ? (
+                  <>
                     <p className="text-sm font-medium text-primary">
-                      NFT Supply: {formData.totalSupply ? Math.floor(Number(formData.totalSupply) / 1000).toLocaleString() : '0'} NFTs
+                      NFT Supply: {nftSupplyDisplay ?? '0'} NFTs
                     </p>
                     <p className="text-xs text-muted-foreground">
                       Each NFT represents 1,000 tokens. Total supply must be divisible by 1,000.
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      90% of tokens will be available for initial sale, 10% reserved for liquidity.
-                    </p>
-                  </div>
-                </div>
-              </>
-            )}
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Provide the total number of ERC20 tokens to mint. Up to 18 decimal places are supported.
+                  </p>
+                )}
+                {showLiquidityReserveNote && (
+                  <p className="text-xs text-muted-foreground">
+                    90% of tokens will be available for the initial sale, with 10% reserved for liquidity.
+                  </p>
+                )}
+              </div>
+            </div>
             
             <div className="space-y-4 pt-4">
               <div className="flex gap-4">
