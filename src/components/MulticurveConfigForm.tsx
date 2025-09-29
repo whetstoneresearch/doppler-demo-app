@@ -42,28 +42,28 @@ export const defaultMulticurveState: MulticurveFormState = {
   tickSpacing: "100",
   curves: [
     {
-      tickLower: "-19100",
-      tickUpper: "-5100",
+      tickLower: "5100",     // $5k market cap end
+      tickUpper: "19100",    // ~30k market cap start
       numPositions: "11",
-      shares: "0.1",
+      shares: "0.1",         // 10% (50000 tokens as tokensToBeSold = 50%)
     },
     {
-      tickLower: "-28000",
-      tickUpper: "-17100",
+      tickLower: "17100",    // ~$25k market cap start
+      tickUpper: "28000",    // ~$75k market cap end
       numPositions: "8",
-      shares: "0.25",
+      shares: "0.25",        // 25% (125,000 tokens)
     },
     {
-      tickLower: "-28000",
-      tickUpper: "-23100",
+      tickLower: "23000",    // ~$45k market cap start
+      tickUpper: "28000",    // ~$75k market cap end
       numPositions: "8",
-      shares: "0.40",
+      shares: "0.40",        // 40% (200,000 tokens)
     },
     {
-      tickLower: "-887200",
-      tickUpper: "-28000",
+      tickLower: "28000",    // $75k rounded
+      tickUpper: "887200",   // max_tick market cap end
       numPositions: "1",
-      shares: "0.25",
+      shares: "0.25",        // 25% (125,000 tokens)
     },
   ],
   enableLock: false,
