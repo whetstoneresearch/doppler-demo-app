@@ -105,9 +105,14 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [airlockOwner, value.enableLock, value.beneficiaries])
 
-  const updateCurve = (index: number, key: keyof CurveInput, fieldValue: string) => {
+  const updateCurve = (
+    index: number,
+    key: keyof CurveInput,
+    fieldValue: string,
+    { snapToSpacing = false }: { snapToSpacing?: boolean } = {},
+  ) => {
     let nextValue = fieldValue
-    if (key === "tickLower" || key === "tickUpper") {
+    if (snapToSpacing && (key === "tickLower" || key === "tickUpper")) {
       const spacing = Number(value.tickSpacing)
       if (isValidTickSpacing(spacing)) {
         nextValue = alignTickInput(fieldValue, spacing)
@@ -261,6 +266,7 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
                     type="number"
                     value={curve.tickLower}
                     onChange={(event) => updateCurve(index, "tickLower", event.target.value)}
+                    onBlur={(event) => updateCurve(index, "tickLower", event.target.value, { snapToSpacing: true })}
                     className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
                     placeholder="e.g., -120000"
                     step={1}
@@ -273,6 +279,7 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
                     type="number"
                     value={curve.tickUpper}
                     onChange={(event) => updateCurve(index, "tickUpper", event.target.value)}
+                    onBlur={(event) => updateCurve(index, "tickUpper", event.target.value, { snapToSpacing: true })}
                     className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
                     placeholder="e.g., -90000"
                     step={1}
