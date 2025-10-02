@@ -70,6 +70,44 @@ export const defaultMulticurveState: MulticurveFormState = {
   beneficiaries: [],
 }
 
+// Preset 2: Single curve with positive ticks
+const preset2PositiveTicks: MulticurveFormState = {
+  fee: "0",
+  tickSpacing: "100",
+  curves: [
+    {
+      tickLower: "188000",
+      tickUpper: "202000",
+      numPositions: "11",
+      shares: "1.0",
+    },
+  ],
+  enableLock: false,
+  beneficiaries: [],
+}
+
+// Preset 3: Single curve with negative ticks
+const preset3NegativeTicks: MulticurveFormState = {
+  fee: "0",
+  tickSpacing: "100",
+  curves: [
+    {
+      tickLower: "-202000",
+      tickUpper: "-188000",
+      numPositions: "11",
+      shares: "1.0",
+    },
+  ],
+  enableLock: false,
+  beneficiaries: [],
+}
+
+export const MULTICURVE_PRESETS = [
+  { name: "Default Multi-Curve", config: defaultMulticurveState },
+  { name: "Single Curve (Positive Ticks)", config: preset2PositiveTicks },
+  { name: "Single Curve (Negative Ticks)", config: preset3NegativeTicks },
+] as const
+
 interface MulticurveConfigFormProps {
   value: MulticurveFormState
   onChange: (state: MulticurveFormState) => void
@@ -194,12 +232,39 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
     return share.toFixed(4)
   }
 
+  const loadPreset = (presetIndex: number) => {
+    const preset = MULTICURVE_PRESETS[presetIndex]
+    if (!preset) return
+    onChange(preset.config)
+  }
+
   return (
     <div className="space-y-6">
       <div className="space-y-2">
         <h3 className="text-lg font-semibold">Multicurve Parameters</h3>
         <p className="text-xs text-muted-foreground">
           Configure the Uniswap V4 multicurve initializer. Shares are expressed as decimals (1.0 = 100%).
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Configuration Presets</label>
+        <div className="flex flex-wrap gap-2">
+          {MULTICURVE_PRESETS.map((preset, index) => (
+            <Button
+              key={index}
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => loadPreset(index)}
+              disabled={disabled}
+            >
+              {preset.name}
+            </Button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Load a predefined configuration to quickly get started.
         </p>
       </div>
 
