@@ -11,7 +11,7 @@ export interface Token {
   symbol: string;
   image?: string;
   // Raw token metadata JSON fetched by the indexer from tokenURI
-  tokenUriData?: any;
+  tokenUriData?: unknown;
 }
 
 export interface Asset {
@@ -139,10 +139,46 @@ export const GET_POOLS_QUERY = `
 `;
 
 // Function to fetch pools using TanStack Query
+type GraphQLPoolItem = {
+  address: string;
+  chainId: string | number;
+  tick: number;
+  sqrtPrice: string;
+  liquidity: string;
+  createdAt: string;
+  baseToken: Token;
+  quoteToken: Token;
+  price: string;
+  fee: number;
+  type?: string | null;
+  dollarLiquidity: string;
+  asset?: {
+    marketCapUsd: string;
+    migrated?: boolean;
+    migratedAt?: string | null;
+    v2Pool?: string | null;
+  } | null;
+  volumeUsd: string;
+  percentDayChange: number;
+  totalFee0: string;
+  totalFee1: string;
+  isToken0: boolean;
+  isCreatorCoin?: boolean | null;
+  isContentCoin?: boolean | null;
+  lastRefreshed?: string | null;
+  lastSwapTimestamp?: string | null;
+  reserves0: string;
+  reserves1: string;
+  currency0?: string;
+  currency1?: string;
+  tickSpacing?: number;
+  hooks?: string | null;
+};
+
 export const getPools = async (types?: string[]): Promise<Pools> => {
   const variables = types?.length ? { types } : {};
-  const response = await client.request<{ pools: { items: any[] } }>(GET_POOLS_QUERY, variables);
-  const items: Pool[] = response.pools.items.map((p: any) => ({
+  const response = await client.request<{ pools: { items: GraphQLPoolItem[] } }>(GET_POOLS_QUERY, variables);
+  const items: Pool[] = response.pools.items.map((p) => ({
     address: p.address,
     chainId: BigInt(p.chainId),
     tick: p.tick,

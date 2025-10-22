@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { getAddresses as getUnifiedAddresses } from '@whetstone-research/doppler-sdk'
+import type { ChainAddresses } from '@whetstone-research/doppler-sdk'
 import { dopplerLensQuoterAbi } from '@/lib/abis/dopplerLens'
 
 type ChainOption = {
@@ -44,12 +45,13 @@ const v4QuoterAbi = [
 ] as const
 
 function resolveDefaultV4Quoter(chainId: number): Address | undefined {
-  const a: any = getUnifiedAddresses(chainId)
+  const addresses = getUnifiedAddresses(chainId) as Partial<ChainAddresses>
   return (
-    a?.v4Quoter ||
-    a?.uniswapV4Quoter ||
-    a?.quoter
-  ) as Address | undefined
+    addresses.v4Quoter ||
+    addresses.uniswapV4Quoter ||
+    addresses.quoter ||
+    undefined
+  )
 }
 
 export default function QuoteDebug() {
@@ -74,8 +76,8 @@ export default function QuoteDebug() {
   const [useDopplerLens, setUseDopplerLens] = useState<boolean>(false)
   const defaultQuoter = useMemo(() => resolveDefaultV4Quoter(chainId), [chainId])
   const defaultDopplerLens = useMemo(() => {
-    const a: any = getUnifiedAddresses(chainId)
-    return a?.dopplerLens as Address | undefined
+    const addresses = getUnifiedAddresses(chainId) as Partial<ChainAddresses>
+    return addresses.dopplerLens as Address | undefined
   }, [chainId])
   const quoterAddress = useDopplerLens 
     ? (quoterAddressOverride || defaultDopplerLens || '') as Address | ''
@@ -142,8 +144,17 @@ export default function QuoteDebug() {
         })
         setAmountOut(out as bigint)
       }
-    } catch (e: any) {
-      setError(e?.shortMessage || e?.message || String(e))
+    } catch (error) {
+      const fallback =
+        typeof error === 'object' && error !== null
+          ? (('shortMessage' in error && typeof error.shortMessage === 'string'
+                ? error.shortMessage
+                : undefined) ||
+              ('message' in error && typeof error.message === 'string'
+                ? error.message
+                : undefined))
+          : undefined
+      setError(fallback ?? String(error))
     } finally {
       setLoading(false)
     }

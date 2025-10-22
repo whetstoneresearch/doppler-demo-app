@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- GraphQL/indexer payloads remain loosely typed here; tightening all branches is a larger follow-up task. */
 import { useParams, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { GraphQLClient } from "graphql-request"
@@ -195,7 +196,7 @@ export default function PoolDetails() {
   const { switchChain, chains, isPending: isSwitching } = useSwitchChain()
   const { data: walletClient } = useWalletClient(account)
   const chainId = searchParams.get('chainId') ? Number(searchParams.get('chainId')) : 84532
-  const publicClient = usePublicClient({ chainId }) as any
+  const publicClient = usePublicClient({ chainId })
   const [amount, setAmount] = useState("")
   const [quotedAmount, setQuotedAmount] = useState<bigint | null>(null)
   const [lastQuoteReliable, setLastQuoteReliable] = useState<boolean>(false)
@@ -442,7 +443,7 @@ export default function PoolDetails() {
           setMetadataUriError('Metadata URI returned unexpected content-type')
           return
         }
-      } catch (e: any) {
+      } catch {
         setMetadataUriError('Failed to fetch metadata URI')
       }
     }
@@ -464,7 +465,7 @@ export default function PoolDetails() {
           args: [pool!.baseToken.address as Address],
         })
         return true
-      } catch (e) {
+      } catch {
         // Any revert means not migratable right now
         return false
       }
@@ -513,7 +514,7 @@ export default function PoolDetails() {
         if (nftAddress && nftAddress !== zeroAddress) {
           return nftAddress
         }
-      } catch (error) {
+      } catch {
         // Token doesn't have mirrorERC721 function, not a DN404
       }
       
@@ -606,6 +607,14 @@ export default function PoolDetails() {
     address: account.address,
     token: pool?.quoteToken.address as Address,
   })
+
+  const safeRefetch = async (refetchFn: () => Promise<unknown>, label: string) => {
+    try {
+      await refetchFn()
+    } catch (refetchError) {
+      console.warn(label, refetchError)
+    }
+  }
 
   // If Doppler404, read user's NFT balance from the ERC721 mirror
   const { data: nftBalanceOf, refetch: refetchNftBalanceOf } = useQuery({
@@ -1282,13 +1291,15 @@ export default function PoolDetails() {
                 args: [account.address as Address],
               })
               setFrozenBalanceRaw(BigInt(fb as any))
-            } catch {}
+            } catch (frozenRefreshError) {
+              console.warn('Failed to refresh frozen balance after V4 swap', frozenRefreshError)
+            }
             setNftReloadNonce((x) => x + 1)
           }
           // Refresh balances after successful swap
-          try { await refetchBaseTokenBalance() } catch {}
-          try { await refetchQuoteTokenBalance() } catch {}
-          try { await refetchNftBalanceOf() } catch {}
+          await safeRefetch(refetchBaseTokenBalance, 'Failed to refresh base token balance after V4 swap')
+          await safeRefetch(refetchQuoteTokenBalance, 'Failed to refresh quote token balance after V4 swap')
+          await safeRefetch(refetchNftBalanceOf, 'Failed to refresh DN404 NFT balance after V4 swap')
         }
       } catch (error) {
         console.error("Error executing V4 swap:", error)
@@ -1402,13 +1413,15 @@ export default function PoolDetails() {
                 args: [account.address as Address],
               })
               setFrozenBalanceRaw(BigInt(fb as any))
-            } catch {}
+            } catch (frozenRefreshError) {
+              console.warn('Failed to refresh frozen balance after V3 swap', frozenRefreshError)
+            }
             setNftReloadNonce((x) => x + 1)
           }
           // Refresh balances after successful swap
-          try { await refetchBaseTokenBalance() } catch {}
-          try { await refetchQuoteTokenBalance() } catch {}
-          try { await refetchNftBalanceOf() } catch {}
+          await safeRefetch(refetchBaseTokenBalance, 'Failed to refresh base token balance after V3 swap')
+          await safeRefetch(refetchQuoteTokenBalance, 'Failed to refresh quote token balance after V3 swap')
+          await safeRefetch(refetchNftBalanceOf, 'Failed to refresh DN404 NFT balance after V3 swap')
         }
         console.log("V3 swap executed successfully")
       } catch (error) {
@@ -1682,7 +1695,9 @@ export default function PoolDetails() {
           args: [account.address as Address],
         })
         setFrozenBalanceRaw(BigInt(fb as any))
-      } catch {}
+      } catch (frozenRefreshError) {
+        console.warn('Failed to refresh frozen balance after freeze action', frozenRefreshError)
+      }
       // Refresh ordering (may change after freeze)
       try {
         if (supportsTokenOfOwnerByIndex && nftMirrorAddress) {
@@ -1715,14 +1730,16 @@ export default function PoolDetails() {
             setOwnedIdsOrdered([])
           }
         }
-      } catch {}
+      } catch (ownedIndexRefreshError) {
+        console.warn('Failed to refresh DN404 token indices after freeze', ownedIndexRefreshError)
+      }
       setSelectedTokenIds(new Set())
       await refreshUserNfts()
       setNftReloadNonce((x) => x + 1)
       // Also refresh balances shown in Swap section
-      try { await refetchBaseTokenBalance() } catch {}
-      try { await refetchQuoteTokenBalance() } catch {}
-      try { await refetchNftBalanceOf() } catch {}
+      await safeRefetch(refetchBaseTokenBalance, 'Failed to refresh base token balance after freeze')
+      await safeRefetch(refetchQuoteTokenBalance, 'Failed to refresh quote token balance after freeze')
+      await safeRefetch(refetchNftBalanceOf, 'Failed to refresh DN404 NFT balance after freeze')
     } catch (e) {
       console.error('Freeze selected failed', e)
       alert(e instanceof Error ? e.message : 'Freeze failed')

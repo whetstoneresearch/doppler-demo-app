@@ -4,7 +4,8 @@ import { useState, useEffect } from "react"
 import { useAccount, useWalletClient, usePublicClient } from "wagmi"
 import { getAddresses } from "@whetstone-research/doppler-sdk"
 import { DopplerSDK, StaticAuctionBuilder, DynamicAuctionBuilder } from "@whetstone-research/doppler-sdk"
-import { parseEther, formatEther, decodeEventLog, type Address } from "viem"
+import { parseEther, formatEther, decodeEventLog } from "viem"
+import type { Address, DecodeEventLogReturnType } from "viem"
 import { CommandBuilder, SwapRouter02Encoder, V4ActionBuilder, V4ActionType } from "doppler-router"
 import { getBlock } from "viem/actions"
 import { airlockAbi } from "@whetstone-research/doppler-sdk"
@@ -133,8 +134,8 @@ export default function CreatePool() {
 
       // Use the unified SDK
       const sdk = new DopplerSDK({
-        walletClient: walletClient as any,
-        publicClient: publicClient as any,
+        walletClient,
+        publicClient,
         chainId: CHAIN_ID,
       });
 
@@ -174,7 +175,7 @@ export default function CreatePool() {
           if (integerSupply % 1000n !== 0n) {
             throw new Error('Doppler404 total supply must be divisible by 1,000')
           }
-        } catch (error) {
+        } catch {
           throw new Error('Invalid Doppler404 total supply')
         }
       }
@@ -182,7 +183,7 @@ export default function CreatePool() {
       let totalSupply: bigint
       try {
         totalSupply = parseEther(totalSupplyInput)
-      } catch (error) {
+      } catch {
         throw new Error('Invalid total supply amount')
       }
 
@@ -219,7 +220,7 @@ export default function CreatePool() {
           })
         }
         
-        let builderChain = staticBuilder
+        const builderChain = staticBuilder
           .saleConfig({
             initialSupply: totalSupply,
             numTokensToSell: numTokensToSell,
@@ -341,31 +342,42 @@ export default function CreatePool() {
         let correctedPoolAddress = result.poolAddress as Address | undefined
         try {
           const receipt = await publicClient.getTransactionReceipt({ hash: result.transactionHash as `0x${string}` })
-          const createLog = receipt.logs.find((log) => {
+
+          const decodeAirlockLog = (log: (typeof receipt.logs)[number]) => {
             try {
-              const decoded = decodeEventLog({ abi: airlockAbi as any, data: log.data, topics: log.topics }) as any
-              return decoded.eventName === 'Create'
+              return decodeEventLog({ abi: airlockAbi, data: log.data, topics: log.topics })
             } catch {
-              return false
+              return null
             }
-          })
-          if (createLog) {
-            const decoded = decodeEventLog({ abi: airlockAbi as any, data: createLog.data, topics: createLog.topics }) as any
-            if (decoded?.eventName === 'Create') {
-              const asset = decoded.args.asset as Address
-              const poolOrHook = decoded.args.poolOrHook as Address
-              // For static auctions, poolOrHook is the V3 pool address
-              correctedTokenAddress = asset
-              correctedPoolAddress = poolOrHook
-              // If the event differs from the SDK result, prefer the event-decoded values.
-              if (result.tokenAddress?.toLowerCase() !== asset.toLowerCase() || result.poolAddress?.toLowerCase() !== poolOrHook.toLowerCase()) {
-                console.warn('[STATIC CREATE] Event-decoded token/pool differs from SDK result. Using event-decoded addresses.', {
-                  sdkToken: result.tokenAddress,
-                  sdkPool: result.poolAddress,
-                  eventToken: asset,
-                  eventPool: poolOrHook,
-                })
-              }
+          }
+
+          type CreateEvent = DecodeEventLogReturnType<typeof airlockAbi, "Create">
+          const isCreateEvent = (event: ReturnType<typeof decodeAirlockLog>): event is CreateEvent =>
+            event?.eventName === 'Create'
+
+          let decodedCreate: CreateEvent | null = null
+          for (const log of receipt.logs) {
+            const decoded = decodeAirlockLog(log)
+            if (isCreateEvent(decoded)) {
+              decodedCreate = decoded
+              break
+            }
+          }
+
+          if (decodedCreate) {
+            const asset = decodedCreate.args.asset as Address
+            const poolOrHook = decodedCreate.args.poolOrHook as Address
+            // For static auctions, poolOrHook is the V3 pool address
+            correctedTokenAddress = asset
+            correctedPoolAddress = poolOrHook
+            // If the event differs from the SDK result, prefer the event-decoded values.
+            if (result.tokenAddress?.toLowerCase() !== asset.toLowerCase() || result.poolAddress?.toLowerCase() !== poolOrHook.toLowerCase()) {
+              console.warn('[STATIC CREATE] Event-decoded token/pool differs from SDK result. Using event-decoded addresses.', {
+                sdkToken: result.tokenAddress,
+                sdkPool: result.poolAddress,
+                eventToken: asset,
+                eventPool: poolOrHook,
+              })
             }
           }
         } catch (e) {

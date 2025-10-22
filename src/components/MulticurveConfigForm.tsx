@@ -1,5 +1,12 @@
 import { Button } from "@/components/ui/button"
+import {
+  DEFAULT_MULTICURVE_LOWER_TICKS,
+  DEFAULT_MULTICURVE_MAX_SUPPLY_SHARES,
+  DEFAULT_MULTICURVE_NUM_POSITIONS,
+  DEFAULT_MULTICURVE_UPPER_TICKS,
+} from "@whetstone-research/doppler-sdk"
 import { useMemo, useEffect } from "react"
+import { formatEther } from "viem"
 
 const isValidTickSpacing = (spacing: number) => Number.isFinite(spacing) && spacing > 0
 
@@ -37,76 +44,59 @@ export interface MulticurveFormState {
   beneficiaries: BeneficiaryInput[]
 }
 
-export const defaultMulticurveState: MulticurveFormState = {
-  fee: "10000",
-  tickSpacing: "100",
+type MarketCapTierIndex = 0 | 1 | 2
+
+const PRESET_FEE = "10000"
+const PRESET_TICK_SPACING = "100"
+
+const sdkShareToDecimal = (share: bigint): string => {
+  const raw = formatEther(share)
+  if (!raw.includes(".")) return raw
+  const trimmed = raw
+    .replace(/(\.\d*?[1-9])0+$/, "$1")
+    .replace(/\.0+$/, "")
+    .replace(/\.$/, "")
+  return trimmed.length === 0 ? "0" : trimmed
+}
+
+const buildPresetConfig = (tier: MarketCapTierIndex): MulticurveFormState => ({
+  fee: PRESET_FEE,
+  tickSpacing: PRESET_TICK_SPACING,
   curves: [
     {
-      tickLower: "5100",     // $5k market cap end
-      tickUpper: "19100",    // ~30k market cap start
-      numPositions: "11",
-      shares: "0.1",         // 10% (50000 tokens as tokensToBeSold = 50%)
-    },
-    {
-      tickLower: "17100",    // ~$25k market cap start
-      tickUpper: "28000",    // ~$75k market cap end
-      numPositions: "8",
-      shares: "0.25",        // 25% (125,000 tokens)
-    },
-    {
-      tickLower: "23000",    // ~$45k market cap start
-      tickUpper: "28000",    // ~$75k market cap end
-      numPositions: "8",
-      shares: "0.40",        // 40% (200,000 tokens)
-    },
-    {
-      tickLower: "28000",    // $75k rounded
-      tickUpper: "887200",   // max_tick market cap end
-      numPositions: "1",
-      shares: "0.25",        // 25% (125,000 tokens)
+      tickLower: String(DEFAULT_MULTICURVE_LOWER_TICKS[tier]),
+      tickUpper: String(DEFAULT_MULTICURVE_UPPER_TICKS[tier]),
+      numPositions: String(DEFAULT_MULTICURVE_NUM_POSITIONS[tier]),
+      shares: sdkShareToDecimal(DEFAULT_MULTICURVE_MAX_SUPPLY_SHARES[tier]),
     },
   ],
   enableLock: false,
   beneficiaries: [],
-}
+})
 
-// Preset 2: Single curve with positive ticks
-const preset2PositiveTicks: MulticurveFormState = {
-  fee: "0",
-  tickSpacing: "100",
-  curves: [
-    {
-      tickLower: "188000",
-      tickUpper: "202000",
-      numPositions: "11",
-      shares: "1.0",
-    },
-  ],
-  enableLock: false,
-  beneficiaries: [],
-}
+const cloneFormState = (state: MulticurveFormState): MulticurveFormState => ({
+  ...state,
+  curves: state.curves.map((curve) => ({ ...curve })),
+  beneficiaries: state.beneficiaries.map((beneficiary) => ({ ...beneficiary })),
+})
 
-// Preset 3: Single curve with negative ticks
-const preset3NegativeTicks: MulticurveFormState = {
-  fee: "0",
-  tickSpacing: "100",
-  curves: [
-    {
-      tickLower: "-202000",
-      tickUpper: "-188000",
-      numPositions: "11",
-      shares: "1.0",
-    },
-  ],
-  enableLock: false,
-  beneficiaries: [],
-}
-
-export const MULTICURVE_PRESETS = [
-  { name: "Default Multi-Curve", config: defaultMulticurveState },
-  { name: "Single Curve (Positive Ticks)", config: preset2PositiveTicks },
-  { name: "Single Curve (Negative Ticks)", config: preset3NegativeTicks },
+const MARKET_CAP_PRESETS = [
+  { key: "low", name: "Low Cap (~$7.5k-$30k)", tier: 0 as MarketCapTierIndex },
+  { key: "medium", name: "Medium Cap (~$50k-$150k)", tier: 1 as MarketCapTierIndex },
+  { key: "high", name: "High Cap (~$250k-$750k)", tier: 2 as MarketCapTierIndex },
 ] as const
+
+export const MULTICURVE_PRESETS = MARKET_CAP_PRESETS.map((preset) => ({
+  key: preset.key,
+  name: preset.name,
+  config: buildPresetConfig(preset.tier),
+}))
+
+const DEFAULT_PRESET_KEY: (typeof MARKET_CAP_PRESETS)[number]["key"] = "medium"
+const fallbackPreset =
+  MULTICURVE_PRESETS.find((preset) => preset.key === DEFAULT_PRESET_KEY) ?? MULTICURVE_PRESETS[0]
+
+export const defaultMulticurveState: MulticurveFormState = cloneFormState(fallbackPreset.config)
 
 interface MulticurveConfigFormProps {
   value: MulticurveFormState
@@ -235,7 +225,7 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
   const loadPreset = (presetIndex: number) => {
     const preset = MULTICURVE_PRESETS[presetIndex]
     if (!preset) return
-    onChange(preset.config)
+    onChange(cloneFormState(preset.config))
   }
 
   return (
@@ -248,7 +238,7 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
       </div>
 
       <div className="space-y-2">
-        <label className="text-sm font-medium">Configuration Presets</label>
+        <label className="text-sm font-medium">Market Cap Presets</label>
         <div className="flex flex-wrap gap-2">
           {MULTICURVE_PRESETS.map((preset, index) => (
             <Button
@@ -264,7 +254,7 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          Load a predefined configuration to quickly get started.
+          Select a preset tuned for a target launch market cap to start from recommended ticks and weights.
         </p>
       </div>
 
@@ -403,7 +393,7 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          Curve share total: <span className="font-semibold text-primary">{shareLabel(totalCurveShare)}</span> (target ≈ 1.0)
+          Curve share total: <span className="font-semibold text-primary">{shareLabel(totalCurveShare)}</span> (must be &lt;= 1.0)
         </p>
       </div>
 
