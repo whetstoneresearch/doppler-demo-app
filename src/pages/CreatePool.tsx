@@ -1,8 +1,8 @@
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router-dom"
 import { useState, useEffect, useCallback, useRef } from "react"
-import { useAccount, useWalletClient, usePublicClient } from "wagmi"
-import { getAddresses } from "@whetstone-research/doppler-sdk"
+import { useAccount, useWalletClient, usePublicClient, useSwitchChain } from "wagmi"
+import { getAddresses, WAD } from "@whetstone-research/doppler-sdk"
 import { DopplerSDK, StaticAuctionBuilder, DynamicAuctionBuilder } from "@whetstone-research/doppler-sdk"
 import { parseEther, formatEther, decodeEventLog } from "viem"
 import type { Address, DecodeEventLogReturnType } from "viem"
@@ -32,8 +32,9 @@ export default function CreatePool() {
   const account = useAccount()
   const { data: walletClient } = useWalletClient()
   const publicClient = usePublicClient()
+  const { switchChainAsync } = useSwitchChain()
   const [isDeploying, setIsDeploying] = useState(false)
-  const [auctionType, setAuctionType] = useState<'static' | 'dynamic' | 'multicurve'>('dynamic')
+  const [auctionType, setAuctionType] = useState<'static' | 'dynamic' | 'multicurve' | 'rehype'>('dynamic')
   const [creationType, setCreationType] = useState<'wallet' | 'api'>('wallet')
   const [isDoppler404, setIsDoppler404] = useState(false)
   const [enableBundlePrebuy, setEnableBundlePrebuy] = useState(false)
@@ -47,7 +48,7 @@ export default function CreatePool() {
     hookAddress?: string
     poolId?: string
     transactionHash: string
-    auctionType: 'static' | 'dynamic' | 'multicurve'
+    auctionType: 'static' | 'dynamic' | 'multicurve' | 'rehype'
   } | null>(null)
   const [multicurveConfig, setMulticurveConfig] = useState<MulticurveFormState>(defaultMulticurveState)
   const [airlockOwnerAddress, setAirlockOwnerAddress] = useState<Address | null>(null)
@@ -57,6 +58,28 @@ export default function CreatePool() {
   const [, setLaunchStatusLoading] = useState(false)
   const [launchStatusError, setLaunchStatusError] = useState<string | null>(null)
   const launchStatusRef = useRef<HTMLDivElement>(null)
+  
+  const [rehypeConfig, setRehypeConfig] = useState({
+    initialSupply: '1000000000',
+    numTokensToSell: '1000000000',
+    fee: '0',
+    tickSpacing: '8',
+    numCurves: '10',
+    curveTickLowerStart: '0',
+    curveTickLowerStep: '16000',
+    curveTickUpper: '240000',
+    curveNumPositions: '10',
+    farTick: '200000',
+    hookAddress: '0x636a756cee08775cc18780f52dd90b634f18ad37',
+    buybackDestination: '',
+    customFee: '3000',
+    assetBuybackPercent: '20',
+    numeraireBuybackPercent: '20',
+    beneficiaryPercent: '30',
+    lpPercent: '30',
+    buybackDestinationShare: '95',
+    airlockOwnerShare: '5',
+  })
 
   const [formData, setFormData] = useState({
     tokenName: '',
@@ -84,15 +107,15 @@ export default function CreatePool() {
   const DN404_UNIT = parseEther('1000')
   const CONTRACT_BALANCE = BigInt('0x8000000000000000000000000000000000000000000000000000000000000000')
 
-  const auctionLabel = auctionType === 'static' ? 'Static' : auctionType === 'dynamic' ? 'Dynamic' : 'Multicurve'
-  const defaultTotalSupplyForAuction = auctionType === 'multicurve' ? '1000000' : '1000000000'
+  const auctionLabel = auctionType === 'static' ? 'Static' : auctionType === 'dynamic' ? 'Dynamic' : auctionType === 'multicurve' ? 'Multicurve' : 'Rehype'
+  const defaultTotalSupplyForAuction = (auctionType === 'multicurve' || auctionType === 'rehype') ? '1000000' : '1000000000'
 
-  const handleAuctionTypeChange = (nextType: 'static' | 'dynamic' | 'multicurve') => {
+  const handleAuctionTypeChange = (nextType: 'static' | 'dynamic' | 'multicurve' | 'rehype') => {
     setAuctionType(nextType)
 
     if (hasCustomTotalSupply) return
 
-    const nextDefault = nextType === 'multicurve' ? '1000000' : '1000000000'
+    const nextDefault = (nextType === 'multicurve' || nextType === 'rehype') ? '1000000' : '1000000000'
     setHasCustomTotalSupply(false)
     setFormData(prev => {
       if (prev.totalSupply === nextDefault) return prev
@@ -140,6 +163,16 @@ export default function CreatePool() {
     try {
       if (!walletClient || !publicClient) throw new Error("Wallet client or public client not found");
       if (!account.address) throw new Error("Account address not found");
+
+      console.log(walletClient.chain.id)
+
+      // Ensure we're on the correct chain
+      if (walletClient.chain?.id !== CHAIN_ID) {
+        console.log(`Switching from chain ${walletClient.chain?.id} to Base Sepolia (${CHAIN_ID})...`);
+        await switchChainAsync({ chainId: CHAIN_ID });
+        // After switching, we need to wait a moment for clients to update
+        throw new Error("Chain switched to Base Sepolia. Please try again.");
+      }
 
       // Use the unified SDK
       const sdk = new DopplerSDK({
@@ -534,7 +567,7 @@ export default function CreatePool() {
 
         const { createParams, tokenAddress, poolId } = await factory.simulateCreateMulticurve(multicurveParams);
         console.log('Predicted multicurve token address:', tokenAddress);
-        console.log('Predicted multicurve pool id:', poolId);
+        console.log('Predicted multicurve pool ID:', poolId);
 
         if (enableMulticurveBundlePrebuy) {
           const pctNum = Number(multicurvePrebuyPercent || '0');
@@ -547,7 +580,7 @@ export default function CreatePool() {
 
           console.log('[BUNDLE PREBUY][Multicurve] createParams:', createParams);
           console.log('[BUNDLE PREBUY][Multicurve] predicted asset:', tokenAddress);
-          console.log('[BUNDLE PREBUY][Multicurve] predicted pool id:', poolId);
+          console.log('[BUNDLE PREBUY][Multicurve] predicted poolId:', poolId);
           console.log('[BUNDLE PREBUY][Multicurve] numTokensToSell:', multicurveParams.sale.numTokensToSell.toString());
           console.log('[BUNDLE PREBUY][Multicurve] prebuy percent:', pct, '%');
           console.log('[BUNDLE PREBUY][Multicurve] target amountOut:', amountOut.toString());
@@ -600,7 +633,7 @@ export default function CreatePool() {
           console.log(`${isDoppler404 ? 'Doppler404 ' : ''}multicurve auction (bundled pre-buy) submitted!`);
           console.log('Transaction hash:', txHash);
           console.log('Predicted token address:', tokenAddress);
-          console.log('Predicted pool id:', poolId);
+          console.log('Predicted poolId:', poolId);
 
           let nftAddress: Address | undefined;
           if (isDoppler404) {
@@ -631,7 +664,7 @@ export default function CreatePool() {
         console.log(`${isDoppler404 ? 'Doppler404 ' : ''}multicurve auction deployment submitted!`);
         console.log('Transaction hash:', result.transactionHash);
         console.log('Token address:', result.tokenAddress);
-        console.log('Pool id:', result.poolId);
+        console.log('Pool ID:', result.poolId);
 
         let nftAddress: Address | undefined;
         if (isDoppler404) {
@@ -652,6 +685,111 @@ export default function CreatePool() {
           poolId: result.poolId,
           transactionHash: result.transactionHash,
           auctionType: 'multicurve',
+        });
+
+        return;
+      }
+
+      if (auctionType === 'rehype') {
+        if (!airlockOwner) throw new Error('Airlock owner not loaded yet');
+        if (!addresses.dopplerHookInitializer || !addresses.noOpMigrator) {
+          throw new Error('Rehype requires dopplerHookInitializer and noOpMigrator addresses on this chain');
+        }
+
+        const buybackDst = rehypeConfig.buybackDestination.trim() as Address;
+        if (!buybackDst || !buybackDst.startsWith('0x') || buybackDst.length !== 42) {
+          throw new Error('Valid buyback destination address is required');
+        }
+
+        // Parse config values from form state
+        const rehypeHookAddress = rehypeConfig.hookAddress as `0x${string}`;
+        const rehypeInitialSupply = parseEther(rehypeConfig.initialSupply);
+        const rehypeNumTokensToSell = parseEther(rehypeConfig.numTokensToSell);
+        const rehypeFee = Number(rehypeConfig.fee);
+        const rehypeTickSpacing = Number(rehypeConfig.tickSpacing);
+        const rehypeFarTick = Number(rehypeConfig.farTick);
+        const rehypeCustomFee = Number(rehypeConfig.customFee);
+
+        // Curve configuration from form
+        const numCurves = Number(rehypeConfig.numCurves);
+        const curveTickLowerStart = Number(rehypeConfig.curveTickLowerStart);
+        const curveTickLowerStep = Number(rehypeConfig.curveTickLowerStep);
+        const curveTickUpper = Number(rehypeConfig.curveTickUpper);
+        const curveNumPositions = Number(rehypeConfig.curveNumPositions);
+
+        const rehypeCurves = Array.from({ length: numCurves }, (_, i) => ({
+          tickLower: curveTickLowerStart + i * curveTickLowerStep,
+          tickUpper: curveTickUpper,
+          numPositions: curveNumPositions,
+          shares: WAD / BigInt(numCurves),
+        }));
+
+        // Fee distribution percentages (convert from percent to WAD - 1e18 = 100%)
+        const assetBuybackPercentWad = BigInt(Math.floor(Number(rehypeConfig.assetBuybackPercent) * 1e16));
+        const numeraireBuybackPercentWad = BigInt(Math.floor(Number(rehypeConfig.numeraireBuybackPercent) * 1e16));
+        const beneficiaryPercentWad = BigInt(Math.floor(Number(rehypeConfig.beneficiaryPercent) * 1e16));
+        const lpPercentWad = BigInt(Math.floor(Number(rehypeConfig.lpPercent) * 1e16));
+
+        // Beneficiary split percentages (convert from percent to WAD)
+        const buybackDestinationShareWad = BigInt(Math.floor(Number(rehypeConfig.buybackDestinationShare) * 1e16));
+        const airlockOwnerShareWad = BigInt(Math.floor(Number(rehypeConfig.airlockOwnerShare) * 1e16));
+
+        const rehypeParams = sdk
+          .buildMulticurveAuction()
+          .tokenConfig({
+            type: 'standard',
+            name: formData.tokenName,
+            symbol: formData.tokenSymbol,
+            tokenURI: formData.tokenURI,
+          })
+          .saleConfig({
+            initialSupply: rehypeInitialSupply,
+            numTokensToSell: rehypeNumTokensToSell,
+            numeraire: addresses.weth,
+          })
+          .poolConfig({
+            fee: rehypeFee,
+            tickSpacing: rehypeTickSpacing,
+            curves: rehypeCurves,
+            farTick: rehypeFarTick,
+            beneficiaries: [
+              { beneficiary: buybackDst, shares: buybackDestinationShareWad },
+              { beneficiary: airlockOwner, shares: airlockOwnerShareWad },
+            ],
+          })
+          .withRehyperDopplerHook({
+            hookAddress: rehypeHookAddress,
+            buybackDestination: buybackDst,
+            customFee: rehypeCustomFee,
+            assetBuybackPercentWad,
+            numeraireBuybackPercentWad,
+            beneficiaryPercentWad,
+            lpPercentWad,
+          })
+          .withGovernance({ type: 'noOp' as const })
+          .withMigration({ type: 'noOp' as const })
+          .withUserAddress(account.address)
+          .withDopplerHookInitializer(addresses.dopplerHookInitializer)
+          .withNoOpMigrator(addresses.noOpMigrator)
+          .build();
+
+        console.log('Rehype pool params:', rehypeParams);
+
+        const { tokenAddress: asset, poolId } = await factory.simulateCreateMulticurve(rehypeParams);
+        console.log('Predicted rehype token address:', asset);
+        console.log('Predicted rehype pool ID:', poolId);
+
+        const result = await factory.createMulticurve(rehypeParams);
+        console.log('Rehype pool deployment submitted!');
+        console.log('Transaction hash:', result.transactionHash);
+        console.log('Token address:', result.tokenAddress);
+        console.log('Pool ID:', result.poolId);
+
+        setDeploymentResult({
+          tokenAddress: result.tokenAddress,
+          poolId: result.poolId,
+          transactionHash: result.transactionHash,
+          auctionType: 'rehype',
         });
 
         return;
@@ -702,16 +840,10 @@ export default function CreatePool() {
           fee: 3000,
           tickSpacing: 60,
           streamableFees: {
-            lockDuration: 60 * 60 * 24 * 30, // 30 days
+            lockDuration: 60 * 60 * 24 * 30,
             beneficiaries: [
-              {
-                beneficiary: airlockOwner,
-                shares: parseEther('0.05'),
-              },
-              {
-                beneficiary: account.address,
-                shares: parseEther('0.95'),
-              }
+              { beneficiary: airlockOwner, shares: parseEther('0.05') },
+              { beneficiary: account.address, shares: parseEther('0.95') },
             ]
           }
         })
@@ -782,6 +914,11 @@ export default function CreatePool() {
       if (!account.address) {
         throw new Error('Connect your wallet to provide a user address for the API request.')
       }
+      if (auctionType === 'rehype') {
+        throw new Error('Rehype pool creation is only supported in Wallet mode.')
+      }
+
+      const apiAuctionType = auctionType
 
       // Parse totalSupply to wei string (same validation as handleDeploy)
       const totalSupplyInput = formData.totalSupply.trim()
@@ -802,16 +939,16 @@ export default function CreatePool() {
         tokenSymbol: formData.tokenSymbol,
         tokenURI: formData.tokenURI || undefined,
         totalSupply: totalSupplyWei.toString(),
-        auctionType,
+        auctionType: apiAuctionType,
         numerairePriceUsd: Number(formData.numerairePrice || 3000),
-        marketCapStartUsd: Number(formData.marketCapStart || (auctionType === 'static' ? 50000 : 500000)),
+        marketCapStartUsd: Number(formData.marketCapStart || (apiAuctionType === 'static' ? 50000 : 500000)),
         marketCapEndUsd: Number(formData.marketCapEnd || 5000000),
         marketCapMinUsd: Number(formData.marketCapMin || 50000),
       })
 
       const headers = buildDopplerApiHeaders(apiKey)
 
-      const response = await fetch(`${apiUrl}${DOPPLER_API_LAUNCH_PATH}/${auctionType}`, {
+      const response = await fetch(`${apiUrl}${DOPPLER_API_LAUNCH_PATH}/${apiAuctionType}`, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
@@ -955,7 +1092,18 @@ export default function CreatePool() {
                       : 'bg-background/50 border border-input hover:bg-background/70'
                   }`}
                 >
-                  Multicurve Initializer (V4)
+                  Multicurve (V4)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAuctionTypeChange('rehype')}
+                  className={`flex-1 px-4 py-2 rounded-md transition-colors ${
+                    auctionType === 'rehype'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background/50 border border-input hover:bg-background/70'
+                  }`}
+                >
+                  Rehype (V4)
                 </button>
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -963,7 +1111,9 @@ export default function CreatePool() {
                   ? 'Traditional bonding curve with fixed liquidity distribution across price range'
                   : auctionType === 'dynamic'
                     ? 'Dutch auction with dynamic rebalancing across epochs'
-                    : 'Seed multiple Uniswap V4 bonding curves in a single initializer with weighted shares'}
+                    : auctionType === 'multicurve'
+                      ? 'Seed multiple Uniswap V4 bonding curves in a single initializer with weighted shares'
+                      : 'Multicurve with RehypeDopplerHook for fee buybacks and custom fee distribution'}
               </p>
             </div>
             
@@ -1129,6 +1279,282 @@ export default function CreatePool() {
                 disabled={isDeploying}
                 airlockOwner={airlockOwnerAddress ?? ''}
               />
+            )}
+
+            {auctionType === 'rehype' && (
+              <div className="space-y-4 p-4 rounded-lg border border-primary/20 bg-background/30">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-primary/80">Rehype Pool Configuration</h3>
+                
+                <div className="space-y-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sale Config</h4>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Initial Supply (tokens)</label>
+                      <input
+                        type="text"
+                        value={rehypeConfig.initialSupply}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, initialSupply: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Tokens to Sell</label>
+                      <input
+                        type="text"
+                        value={rehypeConfig.numTokensToSell}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, numTokensToSell: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pool Config</h4>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Fee</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.fee}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, fee: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Tick Spacing</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.tickSpacing}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, tickSpacing: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Far Tick</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.farTick}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, farTick: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Curves Config</h4>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Num Curves</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.numCurves}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, numCurves: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        min="1"
+                        max="20"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Tick Lower Start</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.curveTickLowerStart}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, curveTickLowerStart: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Tick Lower Step</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.curveTickLowerStep}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, curveTickLowerStep: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Tick Upper</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.curveTickUpper}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, curveTickUpper: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Positions/Curve</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.curveNumPositions}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, curveNumPositions: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        min="1"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Curves: tickLower = start + (i * step), tickUpper = {rehypeConfig.curveTickUpper}, shares = 1/{rehypeConfig.numCurves} each
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Hook Config</h4>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Hook Address</label>
+                      <input
+                        type="text"
+                        value={rehypeConfig.hookAddress}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, hookAddress: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary font-mono text-xs"
+                        placeholder="0x..."
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Buyback Destination *</label>
+                      <input
+                        type="text"
+                        value={rehypeConfig.buybackDestination}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, buybackDestination: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary font-mono text-xs"
+                        placeholder="0x..."
+                        disabled={isDeploying}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium">Custom Fee (basis points)</label>
+                    <input
+                      type="number"
+                      value={rehypeConfig.customFee}
+                      onChange={(e) => setRehypeConfig(prev => ({ ...prev, customFee: e.target.value }))}
+                      className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                      disabled={isDeploying}
+                    />
+                    <p className="text-[10px] text-muted-foreground">100 = 0.01%, 3000 = 0.3%, 10000 = 1%</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Fee Distribution (%)</h4>
+                  <div className="grid gap-4 sm:grid-cols-4">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Asset Buyback</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.assetBuybackPercent}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, assetBuybackPercent: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        min="0"
+                        max="100"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Numeraire Buyback</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.numeraireBuybackPercent}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, numeraireBuybackPercent: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        min="0"
+                        max="100"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Beneficiary</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.beneficiaryPercent}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, beneficiaryPercent: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        min="0"
+                        max="100"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">LP</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.lpPercent}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, lpPercent: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        min="0"
+                        max="100"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                  </div>
+                  {(() => {
+                    const total = Number(rehypeConfig.assetBuybackPercent || 0) + Number(rehypeConfig.numeraireBuybackPercent || 0) + Number(rehypeConfig.beneficiaryPercent || 0) + Number(rehypeConfig.lpPercent || 0)
+                    const isValid = total === 100
+                    return (
+                      <p className={`text-xs ${isValid ? 'text-muted-foreground' : 'text-destructive'}`}>
+                        Total: <span className="font-semibold">{total}%</span> {!isValid && '(must equal 100%)'}
+                      </p>
+                    )
+                  })()}
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Beneficiary Split (%)</h4>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Buyback Destination Share</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.buybackDestinationShare}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, buybackDestinationShare: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        min="0"
+                        max="100"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium">Airlock Owner Share</label>
+                      <input
+                        type="number"
+                        value={rehypeConfig.airlockOwnerShare}
+                        onChange={(e) => setRehypeConfig(prev => ({ ...prev, airlockOwnerShare: e.target.value }))}
+                        className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+                        min="0"
+                        max="100"
+                        disabled={isDeploying}
+                      />
+                    </div>
+                  </div>
+                  {(() => {
+                    const total = Number(rehypeConfig.buybackDestinationShare || 0) + Number(rehypeConfig.airlockOwnerShare || 0)
+                    const isValid = total === 100
+                    return (
+                      <p className={`text-xs ${isValid ? 'text-muted-foreground' : 'text-destructive'}`}>
+                        Total: <span className="font-semibold">{total}%</span> {!isValid && '(must equal 100%)'}
+                      </p>
+                    )
+                  })()}
+                  {airlockOwnerAddress && (
+                    <p className="text-xs text-muted-foreground">
+                      Airlock Owner: <code className="bg-background px-1 rounded">{airlockOwnerAddress.slice(0, 10)}...{airlockOwnerAddress.slice(-8)}</code>
+                    </p>
+                  )}
+                </div>
+              </div>
             )}
 
             <div className="space-y-2">

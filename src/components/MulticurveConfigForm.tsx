@@ -13,12 +13,37 @@ type BeneficiaryInput = {
   shares: string
 }
 
+export interface RehypeHookConfig {
+  enabled: boolean
+  hookAddress: string
+  buybackDestination: string
+  customFee: string
+  assetBuybackPercentWad: string
+  numeraireBuybackPercentWad: string
+  beneficiaryPercentWad: string
+  lpPercentWad: string
+}
+
 export interface MulticurveFormState {
   fee: string
   tickSpacing: string
   curves: CurveInput[]
   enableLock: boolean
   beneficiaries: BeneficiaryInput[]
+  rehypeHook: RehypeHookConfig
+}
+
+export const DEFAULT_REHYPE_HOOK_ADDRESS = '0x636a756cee08775cc18780f52dd90b634f18ad37'
+
+export const defaultRehypeHookConfig: RehypeHookConfig = {
+  enabled: false,
+  hookAddress: DEFAULT_REHYPE_HOOK_ADDRESS,
+  buybackDestination: '',
+  customFee: '3000',
+  assetBuybackPercentWad: '0.2',
+  numeraireBuybackPercentWad: '0.2',
+  beneficiaryPercentWad: '0.3',
+  lpPercentWad: '0.3',
 }
 
 type MarketCapTierIndex = 0 | 1 | 2
@@ -45,12 +70,14 @@ const buildPresetConfig = (tier: MarketCapTierIndex): MulticurveFormState => ({
   ],
   enableLock: false,
   beneficiaries: [],
+  rehypeHook: defaultRehypeHookConfig,
 })
 
 const cloneFormState = (state: MulticurveFormState): MulticurveFormState => ({
   ...state,
   curves: state.curves.map((curve) => ({ ...curve })),
   beneficiaries: state.beneficiaries.map((beneficiary) => ({ ...beneficiary })),
+  rehypeHook: { ...state.rehypeHook },
 })
 
 const MARKET_CAP_PRESETS = [
