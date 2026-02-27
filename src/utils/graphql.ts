@@ -211,9 +211,9 @@ export const getPools = async (types?: string[]): Promise<Pools> => {
     // For V4 pools, poolKey fields might be available
     poolKey: p.currency0 ? {
       currency0: p.currency0,
-      currency1: p.currency1,
+      currency1: p.currency1 ?? '',
       fee: p.fee,
-      tickSpacing: p.tickSpacing,
+      tickSpacing: p.tickSpacing ?? 0,
       hooks: p.hooks || p.address,
     } : undefined,
     currency0: p.currency0,
