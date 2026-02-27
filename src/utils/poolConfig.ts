@@ -5,8 +5,10 @@ export const TOKEN_NUM_MIN_TO_SELL = parseEther("900000000");
 export const TOKEN_MIN_PROCEEDS = parseEther("100");
 export const TOKEN_MAX_PROCEEDS = parseEther("600");
 export const TOKEN_FEE = 20000; // 2% default for V4 dynamic
-export const DEFAULT_START_TICK = 174312; // Align with pure-markets-interface V4 defaults
-export const DEFAULT_END_TICK = 186840;   // Align with pure-markets-interface V4 defaults
+export const DEFAULT_MARKET_CAP_START = 500000;
+export const DEFAULT_MARKET_CAP_END = 5000000;
+export const DEFAULT_MARKET_CAP_MIN = 50000;
+export const DEFAULT_NUMERAIRE_PRICE = 3000;
 
 export function tokenParams(token: {
   name: string;
@@ -22,10 +24,12 @@ export function tokenParams(token: {
     startTimeOffset: 300, // 5 minutes from now (in seconds, not days as the SDK comment incorrectly states)
     duration: 7, // 7 days
     epochLength: 3600, // 1 hour epochs
-    tickRange: {
-      startTick: DEFAULT_START_TICK,
-      endTick: DEFAULT_END_TICK,
+    marketCapRange: {
+      start: DEFAULT_MARKET_CAP_START,
+      end: DEFAULT_MARKET_CAP_END,
+      min: DEFAULT_MARKET_CAP_MIN,
     },
+    numerairePrice: DEFAULT_NUMERAIRE_PRICE,
     // Align with pure-markets-interface V4 dynamic defaults
     tickSpacing: 2,
     fee: TOKEN_FEE,

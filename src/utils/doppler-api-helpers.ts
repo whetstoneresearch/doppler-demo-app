@@ -21,6 +21,10 @@ export interface DopplerApiPayloadArgs {
   tokenURI?: string
   totalSupply: string // bigint wei string, e.g. "1000000000000000000000000"
   auctionType: 'static' | 'dynamic' | 'multicurve'
+  numerairePriceUsd?: number
+  marketCapStartUsd?: number
+  marketCapEndUsd?: number
+  marketCapMinUsd?: number
 }
 
 /**
@@ -36,6 +40,10 @@ export function buildDopplerApiPayload(args: DopplerApiPayloadArgs): DopplerApiR
     tokenURI,
     totalSupply,
     auctionType,
+    numerairePriceUsd,
+    marketCapStartUsd,
+    marketCapEndUsd,
+    marketCapMinUsd,
   } = args
 
   const base: Omit<DopplerApiRequestBody, 'auction'> = {
@@ -58,6 +66,9 @@ export function buildDopplerApiPayload(args: DopplerApiPayloadArgs): DopplerApiR
       enabled: false,
       mode: 'noOp',
     },
+    pricing: {
+      numerairePriceUsd: numerairePriceUsd ?? 3000,
+    },
   }
 
   let auction: DopplerApiRequestBody['auction']
@@ -77,8 +88,9 @@ export function buildDopplerApiPayload(args: DopplerApiPayloadArgs): DopplerApiR
     auction = {
       type: 'static',
       curveConfig: {
-        type: 'preset',
-        preset: 'medium',
+        type: 'range',
+        marketCapStartUsd: marketCapStartUsd ?? 50000,
+        marketCapEndUsd: marketCapEndUsd ?? 5000000,
       },
     }
   } else {
@@ -87,8 +99,8 @@ export function buildDopplerApiPayload(args: DopplerApiPayloadArgs): DopplerApiR
       type: 'dynamic',
       curveConfig: {
         type: 'range',
-        marketCapStartUsd: 100,
-        marketCapMinUsd: 50,
+        marketCapStartUsd: marketCapStartUsd ?? 500000,
+        marketCapMinUsd: marketCapMinUsd ?? 50000,
         minProceeds: '0.01',
         maxProceeds: '0.1',
         durationSeconds: 86400,
