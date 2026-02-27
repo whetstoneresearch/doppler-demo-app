@@ -10,6 +10,9 @@ import { CommandBuilder, SwapRouter02Encoder, V4ActionBuilder, V4ActionType } fr
 import { getBlock } from "viem/actions"
 import { airlockAbi } from "@whetstone-research/doppler-sdk"
 import { MulticurveConfigForm, defaultMulticurveState, type MulticurveFormState, AIRLOCK_OWNER_SHARE } from "../components/MulticurveConfigForm"
+import type { DopplerApiLaunchResponse, DopplerApiErrorResponse } from '../types/doppler-api'
+import { DOPPLER_API_LAUNCH_PATH } from '../types/doppler-api'
+import { buildDopplerApiHeaders, buildDopplerApiPayload } from '../utils/doppler-api-helpers'
 
 // DN404 ABI for mirrorERC721 function
 const dn404Abi = [
@@ -36,6 +39,7 @@ export default function CreatePool() {
   const publicClient = usePublicClient()
   const [isDeploying, setIsDeploying] = useState(false)
   const [auctionType, setAuctionType] = useState<'static' | 'dynamic' | 'multicurve'>('dynamic')
+  const [creationType, setCreationType] = useState<'wallet' | 'api'>('wallet')
   const [isDoppler404, setIsDoppler404] = useState(false)
   const [enableBundlePrebuy, setEnableBundlePrebuy] = useState(false)
   const [prebuyPercent, setPrebuyPercent] = useState<string>('1')
@@ -52,6 +56,8 @@ export default function CreatePool() {
   } | null>(null)
   const [multicurveConfig, setMulticurveConfig] = useState<MulticurveFormState>(defaultMulticurveState)
   const [airlockOwnerAddress, setAirlockOwnerAddress] = useState<Address | null>(null)
+  const [apiDeploymentResult, setApiDeploymentResult] = useState<DopplerApiLaunchResponse | null>(null)
+  const [apiDeployError, setApiDeployError] = useState<string | null>(null)
 
   const [formData, setFormData] = useState({
     tokenName: '',
@@ -757,12 +763,130 @@ export default function CreatePool() {
     }
   };
 
+  const handleApiDeploy = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsDeploying(true)
+    setApiDeploymentResult(null)
+    setApiDeployError(null)
+
+    const apiUrl = import.meta.env.VITE_DOPPLER_API_URL
+    const apiKey = import.meta.env.VITE_DOPPLER_API_KEY
+
+    try {
+      if (!apiUrl || !apiKey) {
+        throw new Error('API URL or API key is not configured. Set VITE_DOPPLER_API_URL and VITE_DOPPLER_API_KEY.')
+      }
+      if (!account.address) {
+        throw new Error('Connect your wallet to provide a user address for the API request.')
+      }
+
+      // Parse totalSupply to wei string (same validation as handleDeploy)
+      const totalSupplyInput = formData.totalSupply.trim()
+      if (!totalSupplyInput) throw new Error('Total supply is required')
+
+      let totalSupplyWei: bigint
+      try {
+        totalSupplyWei = parseEther(totalSupplyInput)
+      } catch {
+        throw new Error('Invalid total supply amount')
+      }
+      if (totalSupplyWei <= 0n) throw new Error('Total supply must be greater than zero')
+
+      const payload = buildDopplerApiPayload({
+        userAddress: account.address,
+        chainId: CHAIN_ID,
+        tokenName: formData.tokenName,
+        tokenSymbol: formData.tokenSymbol,
+        tokenURI: formData.tokenURI || undefined,
+        totalSupply: totalSupplyWei.toString(),
+        auctionType,
+      })
+
+      const headers = buildDopplerApiHeaders(apiKey)
+
+      const response = await fetch(`${apiUrl}${DOPPLER_API_LAUNCH_PATH}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        // Try to extract structured error message from Doppler API error shape
+        const errData = data as DopplerApiErrorResponse
+        const message = errData?.error?.message
+          ?? errData?.error?.code
+          ?? `Request failed with status ${response.status}`
+        throw new Error(message)
+      }
+
+      setApiDeploymentResult(data as DopplerApiLaunchResponse)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'An unexpected error occurred'
+      setApiDeployError(message)
+      console.error('API deployment failed:', error)
+    } finally {
+      setIsDeploying(false)
+    }
+  }
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    if (creationType === 'api') {
+      handleApiDeploy(e)
+    } else {
+      handleDeploy(e)
+    }
+  }
+
   return (
     <div className="p-8">
       <div className="max-w-2xl mx-auto">
         <h1 className="text-4xl font-bold mb-8 text-primary">Create New Pool</h1>
         <div className="border border-primary/20 rounded-lg p-6 bg-card/50 backdrop-blur">
-          <form onSubmit={handleDeploy} className="space-y-6">
+          <form onSubmit={handleFormSubmit} className="space-y-6">
+            {/* Creation Type selector */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Creation Type</label>
+              <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
+                <button
+                  type="button"
+                  onClick={() => setCreationType('wallet')}
+                  className={`flex-1 px-4 py-2 rounded-md transition-colors ${
+                    creationType === 'wallet'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background/50 border border-input hover:bg-background/70'
+                  }`}
+                >
+                  Wallet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreationType('api')}
+                  className={`flex-1 px-4 py-2 rounded-md transition-colors ${
+                    creationType === 'api'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background/50 border border-input hover:bg-background/70'
+                  }`}
+                >
+                  API
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {creationType === 'wallet'
+                  ? 'Deploy directly from your connected wallet using the Doppler SDK'
+                  : 'Submit via the Doppler REST API \u2014 no wallet transaction required'}
+              </p>
+            </div>
+
+            {creationType === 'api' && (!import.meta.env.VITE_DOPPLER_API_URL || !import.meta.env.VITE_DOPPLER_API_KEY) && (
+              <div className="rounded-md bg-yellow-500/10 border border-yellow-500/30 px-4 py-3">
+                <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                  <strong>API not configured.</strong> Set <code>VITE_DOPPLER_API_URL</code> and <code>VITE_DOPPLER_API_KEY</code> in your environment to use API mode.
+                </p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <label className="text-sm font-medium">Auction Type</label>
               <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
@@ -1015,14 +1139,30 @@ export default function CreatePool() {
               </div>
             </div>
             
+            {creationType === 'api' && apiDeployError && (
+              <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3">
+                <p className="text-sm text-destructive">
+                  <strong>API Error:</strong> {apiDeployError}
+                </p>
+              </div>
+            )}
+
             <div className="space-y-4 pt-4">
               <div className="flex gap-4">
                 <Button 
                   type="submit" 
                   className="flex-1 bg-primary/90 hover:bg-primary/80"
-                  disabled={isDeploying || !account.isConnected}
+                  disabled={
+                    isDeploying ||
+                    (creationType === 'wallet' && !account.isConnected) ||
+                    (creationType === 'api' && (!import.meta.env.VITE_DOPPLER_API_URL || !import.meta.env.VITE_DOPPLER_API_KEY))
+                  }
                 >
-                  {isDeploying ? "Deploying..." : `Create ${isDoppler404 ? 'Doppler404 ' : ''}${auctionLabel} Token`}
+                  {isDeploying
+                    ? (creationType === 'api' ? 'Submitting via API...' : 'Deploying...')
+                    : creationType === 'api'
+                      ? 'Submit via API'
+                      : `Create ${isDoppler404 ? 'Doppler404 ' : ''}${auctionLabel} Token`}
                 </Button>
               </div>
               <Link to="/" className="block">
@@ -1119,6 +1259,54 @@ export default function CreatePool() {
                     </Link>
                   );
                 })()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {apiDeploymentResult && (
+          <div className="mt-6 border border-primary/20 rounded-lg p-6 bg-card/50 backdrop-blur">
+            <h2 className="text-xl font-bold mb-4 text-primary">Launch Submitted via API! 🚀</h2>
+            <div className="space-y-3 text-sm">
+              <div>
+                <span className="font-medium">Launch ID:</span>
+                <p className="font-mono break-all text-muted-foreground">{apiDeploymentResult.launchId}</p>
+              </div>
+              <div>
+                <span className="font-medium">Transaction Hash:</span>
+                <p className="font-mono break-all text-muted-foreground">{apiDeploymentResult.txHash}</p>
+              </div>
+              {apiDeploymentResult.predicted?.tokenAddress && (
+                <div>
+                  <span className="font-medium">Predicted Token Address:</span>
+                  <p className="font-mono break-all text-muted-foreground">{apiDeploymentResult.predicted.tokenAddress}</p>
+                </div>
+              )}
+              {apiDeploymentResult.predicted?.poolId && (
+                <div>
+                  <span className="font-medium">Pool ID:</span>
+                  <p className="font-mono break-all text-muted-foreground">{apiDeploymentResult.predicted.poolId}</p>
+                </div>
+              )}
+              <div className="pt-3 space-y-2">
+                <a
+                  href={`https://sepolia.basescan.org/tx/${apiDeploymentResult.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Button variant="outline" className="w-full">
+                    View Transaction on BaseScan →
+                  </Button>
+                </a>
+                <a
+                  href={`${import.meta.env.VITE_DOPPLER_API_URL}${apiDeploymentResult.statusUrl}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Button variant="outline" className="w-full">
+                    Check Launch Status →
+                  </Button>
+                </a>
               </div>
             </div>
           </div>
