@@ -1,32 +1,9 @@
 import { Button } from "@/components/ui/button"
-import {
-  DEFAULT_MULTICURVE_LOWER_TICKS,
-  DEFAULT_MULTICURVE_MAX_SUPPLY_SHARES,
-  DEFAULT_MULTICURVE_NUM_POSITIONS,
-  DEFAULT_MULTICURVE_UPPER_TICKS,
-} from "@whetstone-research/doppler-sdk"
 import { useMemo, useEffect } from "react"
-import { formatEther } from "viem"
-
-const isValidTickSpacing = (spacing: number) => Number.isFinite(spacing) && spacing > 0
-
-const snapTickToSpacing = (tick: number, spacing: number) => {
-  if (!Number.isFinite(tick) || !isValidTickSpacing(spacing)) return tick
-  return Math.round(tick / spacing) * spacing
-}
-
-const alignTickInput = (input: string, spacing: number) => {
-  const trimmed = input.trim()
-  if (!isValidTickSpacing(spacing) || trimmed.length === 0) return input
-  const numeric = Number(trimmed)
-  if (!Number.isFinite(numeric)) return input
-  const snapped = snapTickToSpacing(numeric, spacing)
-  return snapped.toString()
-}
 
 type CurveInput = {
-  tickLower: string
-  tickUpper: string
+  marketCapStart: string
+  marketCapEnd: string
   numPositions: string
   shares: string
 }
@@ -49,25 +26,21 @@ type MarketCapTierIndex = 0 | 1 | 2
 const PRESET_FEE = "10000"
 const PRESET_TICK_SPACING = "100"
 
-const sdkShareToDecimal = (share: bigint): string => {
-  const raw = formatEther(share)
-  if (!raw.includes(".")) return raw
-  const trimmed = raw
-    .replace(/(\.\d*?[1-9])0+$/, "$1")
-    .replace(/\.0+$/, "")
-    .replace(/\.$/, "")
-  return trimmed.length === 0 ? "0" : trimmed
-}
+const PRESET_MARKET_CAP_CONFIGS: { marketCapStart: number; marketCapEnd: number; numPositions: number; shares: string }[] = [
+  { marketCapStart: 7500, marketCapEnd: 30000, numPositions: 10, shares: "1" },      // low
+  { marketCapStart: 50000, marketCapEnd: 150000, numPositions: 10, shares: "1" },    // medium
+  { marketCapStart: 250000, marketCapEnd: 750000, numPositions: 10, shares: "1" },   // high
+]
 
 const buildPresetConfig = (tier: MarketCapTierIndex): MulticurveFormState => ({
   fee: PRESET_FEE,
   tickSpacing: PRESET_TICK_SPACING,
   curves: [
     {
-      tickLower: String(DEFAULT_MULTICURVE_LOWER_TICKS[tier]),
-      tickUpper: String(DEFAULT_MULTICURVE_UPPER_TICKS[tier]),
-      numPositions: String(DEFAULT_MULTICURVE_NUM_POSITIONS[tier]),
-      shares: sdkShareToDecimal(DEFAULT_MULTICURVE_MAX_SUPPLY_SHARES[tier]),
+      marketCapStart: String(PRESET_MARKET_CAP_CONFIGS[tier].marketCapStart),
+      marketCapEnd: String(PRESET_MARKET_CAP_CONFIGS[tier].marketCapEnd),
+      numPositions: String(PRESET_MARKET_CAP_CONFIGS[tier].numPositions),
+      shares: PRESET_MARKET_CAP_CONFIGS[tier].shares,
     },
   ],
   enableLock: false,
@@ -153,41 +126,22 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [airlockOwner, value.enableLock, value.beneficiaries])
 
-  const updateCurve = (
-    index: number,
-    key: keyof CurveInput,
-    fieldValue: string,
-    { snapToSpacing = false }: { snapToSpacing?: boolean } = {},
-  ) => {
-    let nextValue = fieldValue
-    if (snapToSpacing && (key === "tickLower" || key === "tickUpper")) {
-      const spacing = Number(value.tickSpacing)
-      if (isValidTickSpacing(spacing)) {
-        nextValue = alignTickInput(fieldValue, spacing)
-      }
-    }
-
-    const curves = value.curves.map((curve, i) => (i === index ? { ...curve, [key]: nextValue } : curve))
+  const updateCurve = (index: number, key: keyof CurveInput, fieldValue: string) => {
+    const curves = value.curves.map((curve, i) => (i === index ? { ...curve, [key]: fieldValue } : curve))
     onChange({ ...value, curves })
   }
 
   const addCurve = () => {
-    const spacing = Number(value.tickSpacing)
     const last = value.curves[value.curves.length - 1]
-    const resolvedSpacing = isValidTickSpacing(spacing) ? spacing : 8
-    const lastLower = Number.parseInt(last?.tickLower ?? String(160_000 - resolvedSpacing), 10)
-    const nextLower = Number.isFinite(lastLower) ? lastLower + resolvedSpacing : 160_000
+    const lastEnd = Number(last?.marketCapEnd || '0')
+    const nextStart = lastEnd > 0 ? lastEnd : 100000
+    const nextEnd = nextStart * 5
 
     const next: CurveInput = {
-      tickLower: String(nextLower),
-      tickUpper: last?.tickUpper ?? "240000",
+      marketCapStart: String(nextStart),
+      marketCapEnd: String(nextEnd),
       numPositions: last?.numPositions ?? "10",
       shares: last?.shares ?? "0.1",
-    }
-
-    if (isValidTickSpacing(spacing)) {
-      next.tickLower = alignTickInput(next.tickLower, spacing)
-      next.tickUpper = alignTickInput(next.tickUpper, spacing)
     }
 
     setField("curves", [...value.curves, next])
@@ -254,7 +208,7 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          Select a preset tuned for a target launch market cap to start from recommended ticks and weights.
+          Select a preset tuned for a target launch market cap to start from recommended ranges and weights.
         </p>
       </div>
 
@@ -279,24 +233,7 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
           <input
             type="number"
             value={value.tickSpacing}
-            onChange={(event) => {
-              const inputValue = event.target.value
-              const spacing = Number(inputValue)
-              const shouldSnap = isValidTickSpacing(spacing)
-              const alignedCurves = shouldSnap
-                ? value.curves.map((curve) => ({
-                    ...curve,
-                    tickLower: alignTickInput(curve.tickLower, spacing),
-                    tickUpper: alignTickInput(curve.tickUpper, spacing),
-                  }))
-                : value.curves
-
-              onChange({
-                ...value,
-                tickSpacing: inputValue,
-                curves: alignedCurves,
-              })
-            }}
+            onChange={(event) => setField("tickSpacing", event.target.value)}
             className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
             placeholder="e.g., 8 or 60"
             min={1}
@@ -315,7 +252,7 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Each curve defines a price band and share weighting for the initializer. Shares should sum to ~1.0 across curves.
+          Each curve defines a market cap range (in USD) and share weighting for the initializer. Shares should sum to ~1.0 across curves.
         </p>
 
         <div className="space-y-4">
@@ -336,27 +273,27 @@ export function MulticurveConfigForm({ value, onChange, disabled, airlockOwner }
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="text-xs font-medium uppercase tracking-wide">Tick Lower</label>
+                  <label className="text-xs font-medium uppercase tracking-wide">Market Cap Start ($)</label>
                   <input
                     type="number"
-                    value={curve.tickLower}
-                    onChange={(event) => updateCurve(index, "tickLower", event.target.value)}
-                    onBlur={(event) => updateCurve(index, "tickLower", event.target.value, { snapToSpacing: true })}
+                    value={curve.marketCapStart}
+                    onChange={(event) => updateCurve(index, "marketCapStart", event.target.value)}
                     className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
-                    placeholder="e.g., -120000"
+                    placeholder="e.g., 50000"
+                    min={0}
                     step={1}
                     disabled={disabled}
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-medium uppercase tracking-wide">Tick Upper</label>
+                  <label className="text-xs font-medium uppercase tracking-wide">Market Cap End ($)</label>
                   <input
                     type="number"
-                    value={curve.tickUpper}
-                    onChange={(event) => updateCurve(index, "tickUpper", event.target.value)}
-                    onBlur={(event) => updateCurve(index, "tickUpper", event.target.value, { snapToSpacing: true })}
+                    value={curve.marketCapEnd}
+                    onChange={(event) => updateCurve(index, "marketCapEnd", event.target.value)}
                     className="w-full px-3 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
-                    placeholder="e.g., -90000"
+                    placeholder="e.g., 500000"
+                    min={0}
                     step={1}
                     disabled={disabled}
                   />

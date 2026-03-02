@@ -457,7 +457,7 @@ export default function PoolDetails() {
     queryFn: async () => {
       try {
         const from = (account?.address as Address) || zeroAddress
-        await publicClient.simulateContract({
+        await publicClient!.simulateContract({
           account: from,
           address: addresses.airlock as Address,
           abi: airlockAbi as any,
@@ -622,7 +622,7 @@ export default function PoolDetails() {
     enabled: !!publicClient && !!nftMirrorAddress && !!account?.address,
     queryFn: async () => {
       try {
-        const bal = await publicClient.readContract({
+        const bal = await publicClient!.readContract({
           address: nftMirrorAddress as Address,
           abi: erc721Abi,
           functionName: 'balanceOf',

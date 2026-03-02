@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router-dom"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useAccount, useWalletClient, usePublicClient } from "wagmi"
 import { getAddresses } from "@whetstone-research/doppler-sdk"
 import { DopplerSDK, StaticAuctionBuilder, DynamicAuctionBuilder } from "@whetstone-research/doppler-sdk"
@@ -10,6 +10,9 @@ import { CommandBuilder, SwapRouter02Encoder, V4ActionBuilder, V4ActionType } fr
 import { getBlock } from "viem/actions"
 import { airlockAbi } from "@whetstone-research/doppler-sdk"
 import { MulticurveConfigForm, defaultMulticurveState, type MulticurveFormState, AIRLOCK_OWNER_SHARE } from "../components/MulticurveConfigForm"
+import type { DopplerApiLaunchResponse, DopplerApiErrorResponse } from '../types/doppler-api'
+import { DOPPLER_API_LAUNCH_PATH } from '../types/doppler-api'
+import { buildDopplerApiHeaders, buildDopplerApiPayload } from '../utils/doppler-api-helpers'
 
 // DN404 ABI for mirrorERC721 function
 const dn404Abi = [
@@ -22,11 +25,6 @@ const dn404Abi = [
   },
 ] as const
 
-const snapTickToSpacing = (tick: number, spacing: number) => {
-  if (!Number.isFinite(tick) || !Number.isFinite(spacing) || spacing <= 0) return tick
-  return Math.round(tick / spacing) * spacing
-}
-
 const CHAIN_ID = 84532 as const
 const ADDRESSES = getAddresses(CHAIN_ID)
 
@@ -36,6 +34,7 @@ export default function CreatePool() {
   const publicClient = usePublicClient()
   const [isDeploying, setIsDeploying] = useState(false)
   const [auctionType, setAuctionType] = useState<'static' | 'dynamic' | 'multicurve'>('dynamic')
+  const [creationType, setCreationType] = useState<'wallet' | 'api'>('wallet')
   const [isDoppler404, setIsDoppler404] = useState(false)
   const [enableBundlePrebuy, setEnableBundlePrebuy] = useState(false)
   const [prebuyPercent, setPrebuyPercent] = useState<string>('1')
@@ -52,6 +51,12 @@ export default function CreatePool() {
   } | null>(null)
   const [multicurveConfig, setMulticurveConfig] = useState<MulticurveFormState>(defaultMulticurveState)
   const [airlockOwnerAddress, setAirlockOwnerAddress] = useState<Address | null>(null)
+  const [apiDeploymentResult, setApiDeploymentResult] = useState<DopplerApiLaunchResponse | null>(null)
+  const [apiDeployError, setApiDeployError] = useState<string | null>(null)
+  const [launchStatus, setLaunchStatus] = useState<Record<string, unknown> | null>(null)
+  const [, setLaunchStatusLoading] = useState(false)
+  const [launchStatusError, setLaunchStatusError] = useState<string | null>(null)
+  const launchStatusRef = useRef<HTMLDivElement>(null)
 
   const [formData, setFormData] = useState({
     tokenName: '',
@@ -59,6 +64,10 @@ export default function CreatePool() {
     tokenURI: '',
     baseURI: '',
     totalSupply: '1000000000',
+    numerairePrice: '3000',
+    marketCapStart: '',
+    marketCapEnd: '',
+    marketCapMin: '',
   })
   const [hasCustomTotalSupply, setHasCustomTotalSupply] = useState(false)
 
@@ -226,10 +235,13 @@ export default function CreatePool() {
             numTokensToSell: numTokensToSell,
             numeraire: weth,
           })
-          .poolByTicks({
-            startTick: isDoppler404 ? 183000 : 175000, // Doppler404: 0.1 ETH, Regular: default
-            endTick: isDoppler404 ? 230000 : 225000,   // Doppler404: 0.01 ETH, Regular: default
-            fee: 10000, // 1% fee tier
+          .withMarketCapRange({
+            marketCap: {
+              start: Number(formData.marketCapStart || (isDoppler404 ? 100000 : 50000)),
+              end: Number(formData.marketCapEnd || (isDoppler404 ? 10000000 : 5000000)),
+            },
+            numerairePrice: Number(formData.numerairePrice || 3000),
+            fee: 10000,
           })
           .withMigration({
             type: 'uniswapV2' as const
@@ -445,21 +457,20 @@ export default function CreatePool() {
         }
 
         const curves = multicurveConfig.curves.map((curve, index) => {
-          const tickLower = Number(curve.tickLower);
-          const tickUpper = Number(curve.tickUpper);
+          const marketCapStart = Number(curve.marketCapStart);
+          const marketCapEnd = Number(curve.marketCapEnd);
           const numPositions = Number(curve.numPositions);
-          if (!Number.isFinite(tickLower) || !Number.isFinite(tickUpper)) {
-            throw new Error(`Invalid tick bounds for curve ${index + 1}`);
+          if (!Number.isFinite(marketCapStart) || marketCapStart <= 0) {
+            throw new Error(`Invalid market cap start for curve ${index + 1}`);
+          }
+          if (!Number.isFinite(marketCapEnd) || marketCapEnd <= 0) {
+            throw new Error(`Invalid market cap end for curve ${index + 1}`);
+          }
+          if (marketCapStart >= marketCapEnd) {
+            throw new Error(`Market cap start must be less than end for curve ${index + 1}`);
           }
           if (!Number.isFinite(numPositions) || numPositions <= 0) {
             throw new Error(`Number of positions must be positive for curve ${index + 1}`);
-          }
-
-          const snappedLower = snapTickToSpacing(Math.trunc(tickLower), tickSpacing)
-          const snappedUpper = snapTickToSpacing(Math.trunc(tickUpper), tickSpacing)
-
-          if (snappedLower >= snappedUpper) {
-            throw new Error(`Tick lower must be less than tick upper for curve ${index + 1}`)
           }
 
           const sharesInput = curve.shares.trim();
@@ -467,8 +478,10 @@ export default function CreatePool() {
             throw new Error(`Shares value required for curve ${index + 1}`);
           }
           return {
-            tickLower: Math.trunc(snappedLower),
-            tickUpper: Math.trunc(snappedUpper),
+            marketCap: {
+              start: marketCapStart,
+              end: marketCapEnd,
+            },
             numPositions: Math.trunc(numPositions),
             shares: parseEther(sharesInput),
           };
@@ -500,29 +513,28 @@ export default function CreatePool() {
               })
           : undefined;
 
-        const poolConfig = {
-          fee: Math.trunc(fee),
-          tickSpacing: Math.trunc(tickSpacing),
-          curves,
-          lockableBeneficiaries: lockableBeneficiaries && lockableBeneficiaries.length > 0 ? lockableBeneficiaries : undefined,
-        };
-
         const multicurveParams = multicurveBuilder
           .saleConfig({
             initialSupply: totalSupply,
             numTokensToSell: numTokensToSell,
             numeraire: weth,
           })
-          .withMulticurveAuction(poolConfig)
+          .withCurves({
+            numerairePrice: Number(formData.numerairePrice || '3000'),
+            curves,
+            fee: Math.trunc(fee),
+            tickSpacing: Math.trunc(tickSpacing),
+            beneficiaries: lockableBeneficiaries && lockableBeneficiaries.length > 0 ? lockableBeneficiaries : undefined,
+          })
           .withGovernance({ type: 'default' as const })
           .withMigration({ type: 'uniswapV2' as const })
           .withUserAddress(account.address)
           .withIntegrator(account.address)
           .build();
 
-        const { createParams, asset, pool } = await factory.simulateCreateMulticurve(multicurveParams);
-        console.log('Predicted multicurve token address:', asset);
-        console.log('Predicted multicurve pool address:', pool);
+        const { createParams, tokenAddress, poolId } = await factory.simulateCreateMulticurve(multicurveParams);
+        console.log('Predicted multicurve token address:', tokenAddress);
+        console.log('Predicted multicurve pool id:', poolId);
 
         if (enableMulticurveBundlePrebuy) {
           const pctNum = Number(multicurvePrebuyPercent || '0');
@@ -534,8 +546,8 @@ export default function CreatePool() {
           }
 
           console.log('[BUNDLE PREBUY][Multicurve] createParams:', createParams);
-          console.log('[BUNDLE PREBUY][Multicurve] predicted asset:', asset);
-          console.log('[BUNDLE PREBUY][Multicurve] predicted pool:', pool);
+          console.log('[BUNDLE PREBUY][Multicurve] predicted asset:', tokenAddress);
+          console.log('[BUNDLE PREBUY][Multicurve] predicted pool id:', poolId);
           console.log('[BUNDLE PREBUY][Multicurve] numTokensToSell:', multicurveParams.sale.numTokensToSell.toString());
           console.log('[BUNDLE PREBUY][Multicurve] prebuy percent:', pct, '%');
           console.log('[BUNDLE PREBUY][Multicurve] target amountOut:', amountOut.toString());
@@ -546,8 +558,8 @@ export default function CreatePool() {
 
           console.log('[BUNDLE PREBUY][Multicurve] bundler quote:', quote);
 
-          if (quote.asset.toLowerCase() !== asset.toLowerCase()) {
-            console.warn('[BUNDLE PREBUY][Multicurve] Asset mismatch between create simulation and bundler quote:', quote.asset, asset);
+          if (quote.asset.toLowerCase() !== tokenAddress.toLowerCase()) {
+            console.warn('[BUNDLE PREBUY][Multicurve] Asset mismatch between create simulation and bundler quote:', quote.asset, tokenAddress);
           }
 
           const amountIn = quote.amountIn;
@@ -587,14 +599,14 @@ export default function CreatePool() {
 
           console.log(`${isDoppler404 ? 'Doppler404 ' : ''}multicurve auction (bundled pre-buy) submitted!`);
           console.log('Transaction hash:', txHash);
-          console.log('Predicted token address:', asset);
-          console.log('Predicted pool address:', pool);
+          console.log('Predicted token address:', tokenAddress);
+          console.log('Predicted pool id:', poolId);
 
           let nftAddress: Address | undefined;
           if (isDoppler404) {
             try {
               nftAddress = await publicClient.readContract({
-                address: asset as Address,
+                address: tokenAddress as Address,
                 abi: dn404Abi,
                 functionName: 'mirrorERC721',
               });
@@ -604,9 +616,9 @@ export default function CreatePool() {
           }
 
           setDeploymentResult({
-            tokenAddress: asset as string,
+            tokenAddress: tokenAddress as string,
             nftAddress,
-            poolAddress: pool as string,
+            poolId: poolId as string,
             hookAddress: quote.poolKey.hooks,
             transactionHash: txHash as string,
             auctionType: 'multicurve',
@@ -619,7 +631,7 @@ export default function CreatePool() {
         console.log(`${isDoppler404 ? 'Doppler404 ' : ''}multicurve auction deployment submitted!`);
         console.log('Transaction hash:', result.transactionHash);
         console.log('Token address:', result.tokenAddress);
-        console.log('Pool address:', result.poolAddress);
+        console.log('Pool id:', result.poolId);
 
         let nftAddress: Address | undefined;
         if (isDoppler404) {
@@ -637,7 +649,7 @@ export default function CreatePool() {
         setDeploymentResult({
           tokenAddress: result.tokenAddress,
           nftAddress,
-          poolAddress: result.poolAddress,
+          poolId: result.poolId,
           transactionHash: result.transactionHash,
           auctionType: 'multicurve',
         });
@@ -670,25 +682,20 @@ export default function CreatePool() {
         })
       }
       
-      // Set pool tick spacing for the V4 dynamic auction; gamma and epoch/duration use SDK defaults
-      const tickSpacing = 2
-
       const dynamicParams = dynamicBuilder
         .saleConfig({
           initialSupply: totalSupply,
           numTokensToSell: numTokensToSell,
         })
-        .poolConfig({
-          fee: 20000, // 2% fee tier (align with pure-markets-interface)
-          tickSpacing, // Align with V4 dynamic default tick spacing
-        })
-        .auctionByTicks({
-          // Align non-DN404 defaults with pure-markets-interface V4 defaults
-          startTick: isDoppler404 ? 183000 : 174312,
-          endTick: isDoppler404 ? 230000 : 186840,
+        .withMarketCapRange({
+          marketCap: {
+            start: Number(formData.marketCapStart || (isDoppler404 ? 500000 : 500000)),
+            min: Number(formData.marketCapMin || (isDoppler404 ? 50000 : 50000)),
+          },
+          numerairePrice: Number(formData.numerairePrice || 3000),
           minProceeds: parseEther("100"), // 100 ETH
           maxProceeds: parseEther("600"), // 600 ETH
-          // gamma omitted: computed from tick range, duration, epoch, and tickSpacing by the builder
+          fee: 20000,
         })
         .withMigration({
           type: 'uniswapV4' as const,
@@ -698,12 +705,12 @@ export default function CreatePool() {
             lockDuration: 60 * 60 * 24 * 30, // 30 days
             beneficiaries: [
               {
-                address: airlockOwner,
-                percentage: 500, // 5% to airlock owner (in basis points)
+                beneficiary: airlockOwner,
+                shares: parseEther('0.05'),
               },
               {
-                address: account.address,
-                percentage: 9500, // 95% to token creator (in basis points)
+                beneficiary: account.address,
+                shares: parseEther('0.95'),
               }
             ]
           }
@@ -757,12 +764,163 @@ export default function CreatePool() {
     }
   };
 
+  const handleApiDeploy = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsDeploying(true)
+    setApiDeploymentResult(null)
+    setApiDeployError(null)
+    setLaunchStatus(null)
+    setLaunchStatusError(null)
+
+    const apiUrl = import.meta.env.VITE_DOPPLER_API_URL
+    const apiKey = import.meta.env.VITE_DOPPLER_API_KEY
+
+    try {
+      if (!apiUrl || !apiKey) {
+        throw new Error('API URL or API key is not configured. Set VITE_DOPPLER_API_URL and VITE_DOPPLER_API_KEY.')
+      }
+      if (!account.address) {
+        throw new Error('Connect your wallet to provide a user address for the API request.')
+      }
+
+      // Parse totalSupply to wei string (same validation as handleDeploy)
+      const totalSupplyInput = formData.totalSupply.trim()
+      if (!totalSupplyInput) throw new Error('Total supply is required')
+
+      let totalSupplyWei: bigint
+      try {
+        totalSupplyWei = parseEther(totalSupplyInput)
+      } catch {
+        throw new Error('Invalid total supply amount')
+      }
+      if (totalSupplyWei <= 0n) throw new Error('Total supply must be greater than zero')
+
+      const payload = buildDopplerApiPayload({
+        userAddress: account.address,
+        chainId: CHAIN_ID,
+        tokenName: formData.tokenName,
+        tokenSymbol: formData.tokenSymbol,
+        tokenURI: formData.tokenURI || undefined,
+        totalSupply: totalSupplyWei.toString(),
+        auctionType,
+        numerairePriceUsd: Number(formData.numerairePrice || 3000),
+        marketCapStartUsd: Number(formData.marketCapStart || (auctionType === 'static' ? 50000 : 500000)),
+        marketCapEndUsd: Number(formData.marketCapEnd || 5000000),
+        marketCapMinUsd: Number(formData.marketCapMin || 50000),
+      })
+
+      const headers = buildDopplerApiHeaders(apiKey)
+
+      const response = await fetch(`${apiUrl}${DOPPLER_API_LAUNCH_PATH}/${auctionType}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        // Try to extract structured error message from Doppler API error shape
+        const errData = data as DopplerApiErrorResponse
+        const message = errData?.error?.message
+          ?? errData?.error?.code
+          ?? `Request failed with status ${response.status}`
+        throw new Error(message)
+      }
+
+      setApiDeploymentResult(data as DopplerApiLaunchResponse)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'An unexpected error occurred'
+      setApiDeployError(message)
+      console.error('API deployment failed:', error)
+    } finally {
+      setIsDeploying(false)
+    }
+  }
+
+  const fetchLaunchStatus = useCallback(async (statusUrl: string) => {
+    setLaunchStatusLoading(true)
+    setLaunchStatusError(null)
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_DOPPLER_API_URL}${statusUrl}`,
+        { headers: { 'x-api-key': import.meta.env.VITE_DOPPLER_API_KEY } }
+      )
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error?.message ?? `Status ${res.status}`)
+      setLaunchStatus(data)
+      setTimeout(() => launchStatusRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100)
+      return data as Record<string, unknown>
+    } catch (err) {
+      setLaunchStatusError(err instanceof Error ? err.message : 'Failed to fetch status')
+      return null
+    } finally {
+      setLaunchStatusLoading(false)
+    }
+  }, [])
+
+  // Fetch launch status once after API creation
+  useEffect(() => {
+    if (!apiDeploymentResult?.statusUrl) return
+    fetchLaunchStatus(apiDeploymentResult.statusUrl)
+  }, [apiDeploymentResult, fetchLaunchStatus])
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    if (creationType === 'api') {
+      handleApiDeploy(e)
+    } else {
+      handleDeploy(e)
+    }
+  }
+
   return (
     <div className="p-8">
       <div className="max-w-2xl mx-auto">
         <h1 className="text-4xl font-bold mb-8 text-primary">Create New Pool</h1>
         <div className="border border-primary/20 rounded-lg p-6 bg-card/50 backdrop-blur">
-          <form onSubmit={handleDeploy} className="space-y-6">
+          <form onSubmit={handleFormSubmit} className="space-y-6">
+            {/* Creation Type selector */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Creation Type</label>
+              <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
+                <button
+                  type="button"
+                  onClick={() => setCreationType('wallet')}
+                  className={`flex-1 px-4 py-2 rounded-md transition-colors ${
+                    creationType === 'wallet'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background/50 border border-input hover:bg-background/70'
+                  }`}
+                >
+                  Wallet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreationType('api')}
+                  className={`flex-1 px-4 py-2 rounded-md transition-colors ${
+                    creationType === 'api'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background/50 border border-input hover:bg-background/70'
+                  }`}
+                >
+                  API
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {creationType === 'wallet'
+                  ? 'Deploy directly from your connected wallet using the Doppler SDK'
+                  : 'Submit via the Doppler REST API \u2014 no wallet transaction required'}
+              </p>
+            </div>
+
+            {creationType === 'api' && (!import.meta.env.VITE_DOPPLER_API_URL || !import.meta.env.VITE_DOPPLER_API_KEY) && (
+              <div className="rounded-md bg-yellow-500/10 border border-yellow-500/30 px-4 py-3">
+                <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                  <strong>API not configured.</strong> Set <code>VITE_DOPPLER_API_URL</code> and <code>VITE_DOPPLER_API_KEY</code> in your environment to use API mode.
+                </p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <label className="text-sm font-medium">Auction Type</label>
               <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
@@ -828,6 +986,63 @@ export default function CreatePool() {
                   : 'Create a standard ERC20 token with built-in liquidity'}
               </p>
             </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">ETH Price (USD)</label>
+              <input
+                type="number"
+                value={formData.numerairePrice}
+                onChange={(e) => setFormData(prev => ({ ...prev, numerairePrice: e.target.value }))}
+                className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
+                placeholder="e.g., 3000"
+                min={0}
+                step={1}
+              />
+              <p className="text-xs text-muted-foreground">
+                Current ETH price in USD. Used to convert market cap targets to on-chain price ticks.
+              </p>
+            </div>
+
+            {auctionType !== 'multicurve' && (
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Market Cap Start ($)</label>
+                    <input
+                      type="number"
+                      value={formData.marketCapStart}
+                      onChange={(e) => setFormData(prev => ({ ...prev, marketCapStart: e.target.value }))}
+                      className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
+                      placeholder={auctionType === 'static' ? 'e.g., 50000' : 'e.g., 500000'}
+                      min={0}
+                      step={1}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Market Cap {auctionType === 'static' ? 'End' : 'Min'} ($)</label>
+                    <input
+                      type="number"
+                      value={auctionType === 'static' ? formData.marketCapEnd : formData.marketCapMin}
+                      onChange={(e) => setFormData(prev => ({
+                        ...prev,
+                        ...(auctionType === 'static'
+                          ? { marketCapEnd: e.target.value }
+                          : { marketCapMin: e.target.value })
+                      }))}
+                      className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
+                      placeholder={auctionType === 'static' ? 'e.g., 5000000' : 'e.g., 50000'}
+                      min={0}
+                      step={1}
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {auctionType === 'static'
+                    ? 'Define the starting and ending market cap (in USD) for the bonding curve price range.'
+                    : 'Define the starting market cap and minimum floor (in USD) for the Dutch auction.'}
+                </p>
+              </div>
+            )}
             
             {auctionType === 'static' && (
               <div className="space-y-2">
@@ -1015,14 +1230,30 @@ export default function CreatePool() {
               </div>
             </div>
             
+            {creationType === 'api' && apiDeployError && (
+              <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3">
+                <p className="text-sm text-destructive">
+                  <strong>API Error:</strong> {apiDeployError}
+                </p>
+              </div>
+            )}
+
             <div className="space-y-4 pt-4">
               <div className="flex gap-4">
                 <Button 
                   type="submit" 
                   className="flex-1 bg-primary/90 hover:bg-primary/80"
-                  disabled={isDeploying || !account.isConnected}
+                  disabled={
+                    isDeploying ||
+                    (creationType === 'wallet' && !account.isConnected) ||
+                    (creationType === 'api' && (!import.meta.env.VITE_DOPPLER_API_URL || !import.meta.env.VITE_DOPPLER_API_KEY))
+                  }
                 >
-                  {isDeploying ? "Deploying..." : `Create ${isDoppler404 ? 'Doppler404 ' : ''}${auctionLabel} Token`}
+                  {isDeploying
+                    ? (creationType === 'api' ? 'Submitting via API...' : 'Deploying...')
+                    : creationType === 'api'
+                      ? 'Submit via API'
+                      : `Create ${isDoppler404 ? 'Doppler404 ' : ''}${auctionLabel} Token`}
                 </Button>
               </div>
               <Link to="/" className="block">
@@ -1105,16 +1336,83 @@ export default function CreatePool() {
                 )}
                 {/* Link to the pool details page */}
                 {(() => {
-                  const chainId = CHAIN_ID; // Base Sepolia for this miniapp
-                  const poolPageAddress =
-                    deploymentResult.auctionType === 'dynamic'
-                      ? deploymentResult.hookAddress
-                      : deploymentResult.poolAddress;
+                  const chainId = CHAIN_ID;
+                  let poolPageAddress: string | undefined;
+                  if (deploymentResult.auctionType === 'multicurve') {
+                    poolPageAddress = deploymentResult.poolId;
+                  } else if (deploymentResult.auctionType === 'dynamic') {
+                    poolPageAddress = deploymentResult.hookAddress;
+                  } else {
+                    poolPageAddress = deploymentResult.poolAddress;
+                  }
                   if (!poolPageAddress) return null;
                   return (
                     <Link to={`/pool/${poolPageAddress}?chainId=${chainId}`}>
                       <Button className="w-full">
                         Open Pool Page →
+                      </Button>
+                    </Link>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {apiDeploymentResult && (
+          <div className="mt-6 border border-primary/20 rounded-lg p-6 bg-card/50 backdrop-blur">
+            <h2 className="text-xl font-bold mb-4 text-primary">Launch Submitted via API! 🚀</h2>
+            <div className="space-y-3 text-sm">
+              <div>
+                <span className="font-medium">Launch ID:</span>
+                <p className="font-mono break-all text-muted-foreground">{apiDeploymentResult.launchId}</p>
+              </div>
+              <div>
+                <span className="font-medium">Transaction Hash:</span>
+                <p className="font-mono break-all text-muted-foreground">{apiDeploymentResult.txHash}</p>
+              </div>
+              {apiDeploymentResult.predicted?.tokenAddress && (
+                <div>
+                  <span className="font-medium">Predicted Token Address:</span>
+                  <p className="font-mono break-all text-muted-foreground">{apiDeploymentResult.predicted.tokenAddress}</p>
+                </div>
+              )}
+              {apiDeploymentResult.predicted?.poolId && (
+                <div>
+                  <span className="font-medium">Pool ID:</span>
+                  <p className="font-mono break-all text-muted-foreground">{apiDeploymentResult.predicted.poolId}</p>
+                </div>
+              )}
+              <div className="pt-3 space-y-2">
+                <a
+                  href={`https://sepolia.basescan.org/tx/${apiDeploymentResult.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Button variant="outline" className="w-full">
+                    View Transaction on BaseScan →
+                  </Button>
+                </a>
+                {launchStatusError && (
+                  <p className="text-xs text-destructive">{launchStatusError}</p>
+                )}
+                {launchStatus && (
+                  <div ref={launchStatusRef}>
+                    <pre className="mt-2 rounded-md bg-background/80 border border-input p-3 text-xs overflow-auto max-h-48">
+                      {JSON.stringify(launchStatus, null, 2)}
+                    </pre>
+                  </div>
+                )}
+                {launchStatus?.status === 'confirmed' && (() => {
+                  const result = launchStatus.result as Record<string, unknown> | undefined;
+                  const poolPageAddress = auctionType === 'multicurve'
+                    ? result?.poolId
+                    : result?.poolOrHookAddress;
+                  if (!poolPageAddress) return null;
+                  return (
+                    <Link to={`/pool/${String(poolPageAddress)}?chainId=${CHAIN_ID}`}>
+                      <Button className="w-full mt-2">
+                        View Pool →
                       </Button>
                     </Link>
                   );
