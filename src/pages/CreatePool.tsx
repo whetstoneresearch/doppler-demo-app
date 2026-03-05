@@ -100,7 +100,7 @@ export default function CreatePool() {
     if (!Number.isFinite(parsed) || parsed <= 0) return '0'
     return Math.floor(parsed / 1000).toLocaleString()
   })()
-  const showLiquidityReserveNote = auctionType !== 'multicurve'
+  const showLiquidityReserveNote = auctionType === 'static' || auctionType === 'dynamic'
 
   // DN404: number of ERC20 base units represented per NFT.
   // We want 1 NFT = 1,000 tokens; tokens have 18 decimals, so use 1000e18.
@@ -1153,7 +1153,7 @@ export default function CreatePool() {
               </p>
             </div>
 
-            {auctionType !== 'multicurve' && (
+            {(auctionType === 'static' || auctionType === 'dynamic') && (
               <div className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
@@ -1628,7 +1628,7 @@ export default function CreatePool() {
                   setHasCustomTotalSupply(value.trim() !== defaultTotalSupplyForAuction)
                 }}
                 className="w-full px-4 py-2 rounded-md bg-background/50 border border-input focus:border-primary focus:ring-1 focus:ring-primary"
-                placeholder={isDoppler404 || auctionType === 'multicurve' ? "e.g., 1000000" : "e.g., 1000000000"}
+                placeholder={isDoppler404 || auctionType === 'multicurve' || auctionType === 'rehype' ? "e.g., 1000000" : "e.g., 1000000000"}
                 min={isDoppler404 ? 1000 : 0}
                 step={isDoppler404 ? 1000 : 'any'}
                 required
@@ -1764,7 +1764,7 @@ export default function CreatePool() {
                 {(() => {
                   const chainId = CHAIN_ID;
                   let poolPageAddress: string | undefined;
-                  if (deploymentResult.auctionType === 'multicurve') {
+                  if (deploymentResult.auctionType === 'multicurve' || deploymentResult.auctionType === 'rehype') {
                     poolPageAddress = deploymentResult.poolId;
                   } else if (deploymentResult.auctionType === 'dynamic') {
                     poolPageAddress = deploymentResult.hookAddress;
