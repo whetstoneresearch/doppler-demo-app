@@ -209,7 +209,7 @@ export const getPools = async (types?: string[]): Promise<Pools> => {
     reserves0: BigInt(p.reserves0),
     reserves1: BigInt(p.reserves1),
     // For V4 pools, poolKey fields might be available
-    poolKey: p.currency0 ? {
+    poolKey: p.currency0 && p.currency1 && p.tickSpacing !== undefined ? {
       currency0: p.currency0,
       currency1: p.currency1 ?? '',
       fee: p.fee,

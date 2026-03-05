@@ -45,7 +45,7 @@ const v4QuoterAbi = [
 ] as const
 
 function resolveDefaultV4Quoter(chainId: number): Address | undefined {
-  const addresses = getUnifiedAddresses(chainId) as Partial<ChainAddresses>
+  const addresses = getUnifiedAddresses(chainId) as Partial<ChainAddresses> & Record<string, Address | undefined>
   return (
     addresses.v3Quoter ||
     undefined
