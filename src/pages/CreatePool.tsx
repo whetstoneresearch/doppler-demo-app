@@ -751,13 +751,12 @@ export default function CreatePool() {
             fee: rehypeFee,
             tickSpacing: rehypeTickSpacing,
             curves: rehypeCurves,
-            farTick: rehypeFarTick,
             beneficiaries: [
               { beneficiary: buybackDst, shares: buybackDestinationShareWad },
               { beneficiary: airlockOwner, shares: airlockOwnerShareWad },
             ],
           })
-          .withRehyperDopplerHook({
+          .withRehypeDopplerHook({
             hookAddress: rehypeHookAddress,
             buybackDestination: buybackDst,
             customFee: rehypeCustomFee,
@@ -765,6 +764,7 @@ export default function CreatePool() {
             numeraireBuybackPercentWad,
             beneficiaryPercentWad,
             lpPercentWad,
+            farTick: rehypeFarTick,
           })
           .withGovernance({ type: 'noOp' as const })
           .withMigration({ type: 'noOp' as const })
