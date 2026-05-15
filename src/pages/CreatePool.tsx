@@ -31,7 +31,7 @@ const ADDRESSES = getAddresses(CHAIN_ID)
 export default function CreatePool() {
   const account = useConnection()
   const { data: walletClient } = useWalletClient()
-  const publicClient = usePublicClient()
+  const publicClient = usePublicClient({ chainId: CHAIN_ID })
   const { switchChainAsync } = useSwitchChain()
   const [isDeploying, setIsDeploying] = useState(false)
   const [auctionType, setAuctionType] = useState<'static' | 'dynamic' | 'multicurve' | 'rehype'>('dynamic')
@@ -256,6 +256,7 @@ export default function CreatePool() {
           })
         } else {
           staticBuilder.tokenConfig({
+            type: 'dopplerERC20V1' as const,
             name: formData.tokenName,
             symbol: formData.tokenSymbol,
             tokenURI: formData.tokenURI,
@@ -460,6 +461,10 @@ export default function CreatePool() {
       }
 
       if (auctionType === 'multicurve') {
+        if (!addresses.dopplerHookInitializer) {
+          throw new Error('Multicurve requires dopplerHookInitializer address on this chain');
+        }
+
         const weth = addresses.weth;
         const multicurveBuilder = sdk.buildMulticurveAuction();
 
@@ -473,6 +478,7 @@ export default function CreatePool() {
           });
         } else {
           multicurveBuilder.tokenConfig({
+            type: 'dopplerERC20V1' as const,
             name: formData.tokenName,
             symbol: formData.tokenSymbol,
             tokenURI: formData.tokenURI,
@@ -560,9 +566,10 @@ export default function CreatePool() {
             beneficiaries: lockableBeneficiaries && lockableBeneficiaries.length > 0 ? lockableBeneficiaries : undefined,
           })
           .withGovernance({ type: 'default' as const })
-          .withMigration({ type: 'uniswapV2' as const })
+          .withMigration({ type: 'noOp' as const })
           .withUserAddress(account.address)
           .withIntegrator(account.address)
+          .withDopplerHookInitializer(addresses.dopplerHookInitializer)
           .build();
 
         const { createParams, tokenAddress, poolId } = await factory.simulateCreateMulticurve(multicurveParams);
@@ -692,8 +699,8 @@ export default function CreatePool() {
 
       if (auctionType === 'rehype') {
         if (!airlockOwner) throw new Error('Airlock owner not loaded yet');
-        if (!addresses.dopplerHookInitializer || !addresses.noOpMigrator) {
-          throw new Error('Rehype requires dopplerHookInitializer and noOpMigrator addresses on this chain');
+        if (!addresses.dopplerHookInitializer) {
+          throw new Error('Rehype requires dopplerHookInitializer address on this chain');
         }
 
         const buybackDst = rehypeConfig.buybackDestination.trim() as Address;
@@ -736,12 +743,20 @@ export default function CreatePool() {
 
         const rehypeParams = sdk
           .buildMulticurveAuction()
-          .tokenConfig({
-            type: 'standard',
-            name: formData.tokenName,
-            symbol: formData.tokenSymbol,
-            tokenURI: formData.tokenURI,
-          })
+          .tokenConfig(isDoppler404
+            ? {
+                type: 'doppler404' as const,
+                name: formData.tokenName,
+                symbol: formData.tokenSymbol,
+                baseURI: formData.baseURI || `https://metadata.example.com/${formData.tokenSymbol.toLowerCase()}/`,
+                unit: DN404_UNIT,
+              }
+            : {
+                type: 'dopplerERC20V1' as const,
+                name: formData.tokenName,
+                symbol: formData.tokenSymbol,
+                tokenURI: formData.tokenURI,
+              })
           .saleConfig({
             initialSupply: rehypeInitialSupply,
             numTokensToSell: rehypeNumTokensToSell,
@@ -770,7 +785,6 @@ export default function CreatePool() {
           .withMigration({ type: 'noOp' as const })
           .withUserAddress(account.address)
           .withDopplerHookInitializer(addresses.dopplerHookInitializer)
-          .withNoOpMigrator(addresses.noOpMigrator)
           .build();
 
         console.log('Rehype pool params:', rehypeParams);
@@ -814,12 +828,13 @@ export default function CreatePool() {
         })
       } else {
         dynamicBuilder.tokenConfig({
+          type: 'dopplerERC20V1' as const,
           name: formData.tokenName,
           symbol: formData.tokenSymbol,
           tokenURI: formData.tokenURI,
         })
       }
-      
+
       const dynamicParams = dynamicBuilder
         .saleConfig({
           initialSupply: totalSupply,
@@ -836,16 +851,14 @@ export default function CreatePool() {
           fee: 20000,
         })
         .withMigration({
-          type: 'uniswapV4' as const,
+          type: 'dopplerHook' as const,
           fee: 3000,
           tickSpacing: 60,
-          streamableFees: {
-            lockDuration: 60 * 60 * 24 * 30,
-            beneficiaries: [
-              { beneficiary: airlockOwner, shares: parseEther('0.05') },
-              { beneficiary: account.address, shares: parseEther('0.95') },
-            ]
-          }
+          lockDuration: 60 * 60 * 24 * 30,
+          beneficiaries: [
+            { beneficiary: airlockOwner, shares: parseEther('0.05') },
+            { beneficiary: account.address, shares: parseEther('0.95') },
+          ],
         })
         .withGovernance({ type: 'default' })
         .withUserAddress(account.address)
