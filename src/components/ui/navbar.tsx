@@ -1,10 +1,12 @@
 import { Button } from "@/components/ui/button"
-import { useAccount, useBalance, useConnect, useDisconnect } from 'wagmi'
+import { useBalance, useConnect, useConnection, useConnectors, useDisconnect } from 'wagmi'
 import { Link, useLocation, useSearchParams } from "react-router-dom"
+import { formatUnits } from 'viem'
 
 export function Navbar() {
-  const { address, isConnected } = useAccount()
-  const { connect, connectors } = useConnect()
+  const { address, isConnected } = useConnection()
+  const { connect } = useConnect()
+  const connectors = useConnectors()
   const { disconnect } = useDisconnect()
   const [searchParams] = useSearchParams()
   const location = useLocation()
@@ -33,7 +35,7 @@ export function Navbar() {
             <div className="flex items-center gap-4">
               <div className="flex h-9 items-center justify-center rounded-md border bg-muted/50 px-4 text-sm text-muted-foreground">
                 <span className="text-primary">
-                  {balance?.formatted ? Number(balance.formatted).toFixed(4) : '0.0000'} ETH
+                  {balance ? Number(formatUnits(balance.value, balance.decimals)).toFixed(4) : '0.0000'} ETH
                 </span>
               </div>
               <div className="flex h-9 items-center justify-center rounded-md border bg-muted/50 px-4 text-sm text-muted-foreground">

@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { usePublicClient } from 'wagmi'
 import { Address, Hex, isAddress, parseUnits, zeroAddress } from 'viem'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { getAddresses as getUnifiedAddresses } from '@whetstone-research/doppler-sdk'
-import type { ChainAddresses } from '@whetstone-research/doppler-sdk'
+import { getAddresses as getUnifiedAddresses } from '@whetstone-research/doppler-sdk/evm'
+import type { ChainAddresses } from '@whetstone-research/doppler-sdk/evm'
 import { dopplerLensQuoterAbi } from '@/lib/abis/dopplerLens'
 
 type ChainOption = {
@@ -86,12 +86,6 @@ export default function QuoteDebug() {
   const [error, setError] = useState<string | null>(null)
   const [amountOut, setAmountOut] = useState<bigint | null>(null)
 
-  useEffect(() => {
-    // Reset outputs when chain changes
-    setAmountOut(null)
-    setError(null)
-  }, [chainId])
-
   const canQuote =
     !!publicClient &&
     quoterAddress !== '' &&
@@ -170,7 +164,11 @@ export default function QuoteDebug() {
               <label className="text-sm text-muted-foreground">Chain</label>
               <select
                 value={chainId}
-                onChange={(e) => setChainId(Number(e.target.value))}
+                onChange={(e) => {
+                  setChainId(Number(e.target.value))
+                  setAmountOut(null)
+                  setError(null)
+                }}
                 className="w-full mt-1 p-2 bg-background/50 border rounded"
               >
                 {CHAINS.map((c) => (

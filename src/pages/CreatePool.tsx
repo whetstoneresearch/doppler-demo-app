@@ -1,14 +1,14 @@
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router-dom"
 import { useState, useEffect, useCallback, useRef } from "react"
-import { useAccount, useWalletClient, usePublicClient, useSwitchChain } from "wagmi"
-import { getAddresses, WAD } from "@whetstone-research/doppler-sdk"
-import { DopplerSDK, StaticAuctionBuilder, DynamicAuctionBuilder } from "@whetstone-research/doppler-sdk"
+import { useConnection, useWalletClient, usePublicClient, useSwitchChain } from "wagmi"
+import { getAddresses, WAD } from "@whetstone-research/doppler-sdk/evm"
+import { DopplerSDK, StaticAuctionBuilder, DynamicAuctionBuilder } from "@whetstone-research/doppler-sdk/evm"
 import { parseEther, formatEther, decodeEventLog } from "viem"
 import type { Address, DecodeEventLogReturnType } from "viem"
 import { CommandBuilder, SwapRouter02Encoder, V4ActionBuilder, V4ActionType } from "doppler-router"
 import { getBlock } from "viem/actions"
-import { airlockAbi } from "@whetstone-research/doppler-sdk"
+import { airlockAbi } from "@whetstone-research/doppler-sdk/evm"
 import { MulticurveConfigForm, defaultMulticurveState, type MulticurveFormState, AIRLOCK_OWNER_SHARE } from "../components/MulticurveConfigForm"
 import type { DopplerApiLaunchResponse, DopplerApiErrorResponse } from '../types/doppler-api'
 import { DOPPLER_API_LAUNCH_PATH } from '../types/doppler-api'
@@ -29,7 +29,7 @@ const CHAIN_ID = 84532 as const
 const ADDRESSES = getAddresses(CHAIN_ID)
 
 export default function CreatePool() {
-  const account = useAccount()
+  const account = useConnection()
   const { data: walletClient } = useWalletClient()
   const publicClient = usePublicClient()
   const { switchChainAsync } = useSwitchChain()
@@ -999,7 +999,9 @@ export default function CreatePool() {
   // Fetch launch status once after API creation
   useEffect(() => {
     if (!apiDeploymentResult?.statusUrl) return
-    fetchLaunchStatus(apiDeploymentResult.statusUrl)
+    queueMicrotask(() => {
+      void fetchLaunchStatus(apiDeploymentResult.statusUrl)
+    })
   }, [apiDeploymentResult, fetchLaunchStatus])
 
   const handleFormSubmit = (e: React.FormEvent) => {

@@ -7,15 +7,15 @@ import { Address, formatEther, formatUnits, Hex, maxUint256, parseAbi, parseEthe
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { useState, useEffect } from "react"
-import { useAccount, usePublicClient, useBalance, useSwitchChain } from "wagmi"
+import { useConnection, usePublicClient, useChains, useSwitchChain } from "wagmi"
 import { useWalletClient } from "wagmi"
 import { 
   Quoter,
-} from "@whetstone-research/doppler-sdk"
-import { getAddresses } from "@whetstone-research/doppler-sdk"
+} from "@whetstone-research/doppler-sdk/evm"
+import { getAddresses } from "@whetstone-research/doppler-sdk/evm"
 import { CommandBuilder, V4ActionBuilder, V4ActionType } from "doppler-router"
 import { dopplerLensQuoterAbi } from "@/lib/abis/dopplerLens"
-import { airlockAbi } from "@whetstone-research/doppler-sdk"
+import { airlockAbi } from "@whetstone-research/doppler-sdk/evm"
 
 
 // Minimal ABI for UniversalRouter execute function
@@ -192,9 +192,10 @@ const GET_POOL_QUERY = `
 export default function PoolDetails() {
   const { address } = useParams<{ address: string }>()
   const [searchParams] = useSearchParams()
-  const account = useAccount()
-  const { switchChain, chains, isPending: isSwitching } = useSwitchChain()
-  const { data: walletClient } = useWalletClient(account)
+  const account = useConnection()
+  const { switchChain, isPending: isSwitching } = useSwitchChain()
+  const chains = useChains()
+  const { data: walletClient } = useWalletClient({ account: account.address })
   const chainId = searchParams.get('chainId') ? Number(searchParams.get('chainId')) : 84532
   const publicClient = usePublicClient({ chainId })
   const [amount, setAmount] = useState("")
@@ -207,7 +208,6 @@ export default function PoolDetails() {
   const [needsApproval, setNeedsApproval] = useState<boolean>(false)
   const [tokenInDecimals, setTokenInDecimals] = useState<number>(18)
   const [baseDecimals, setBaseDecimals] = useState<number>(18)
-  const [nftAddress, setNftAddress] = useState<Address | null>(null)
   const [nftData, setNftData] = useState<Array<{
     tokenId: number
     owner: Address
@@ -494,8 +494,23 @@ export default function PoolDetails() {
 
   // Determine if auction has not started yet (for V4 dynamic auctions)
   const auctionStartTime = pool?.v4Config?.startingTime ? Number(pool.v4Config.startingTime) : undefined
-  const nowSec = Math.floor(Date.now() / 1000)
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000))
   const auctionNotStarted = typeof auctionStartTime === 'number' && nowSec < auctionStartTime
+
+  useEffect(() => {
+    if (typeof auctionStartTime !== 'number') return
+
+    const updateNow = () => setNowSec(Math.floor(Date.now() / 1000))
+    const secondsUntilStart = auctionStartTime - Math.floor(Date.now() / 1000)
+
+    if (secondsUntilStart <= 0) {
+      queueMicrotask(updateNow)
+      return
+    }
+
+    const timeout = window.setTimeout(updateNow, (secondsUntilStart + 1) * 1000)
+    return () => window.clearTimeout(timeout)
+  }, [auctionStartTime])
 
   // Check if the base token is a DN404 token with NFT mirror
   const { data: nftMirrorAddress } = useQuery({
@@ -523,14 +538,7 @@ export default function PoolDetails() {
     enabled: !!pool?.baseToken.address && !!publicClient,
   })
 
-  // Derive nftAddress from detection; if not Doppler404, ensure it's null
-  useEffect(() => {
-    if (nftMirrorAddress) {
-      setNftAddress(nftMirrorAddress as Address)
-    } else {
-      setNftAddress(null)
-    }
-  }, [nftMirrorAddress])
+  const nftAddress = (nftMirrorAddress ?? null) as Address | null
 
   // Load DN404 freeze-related data (decimals, frozen balance, and ownedIds if supported)
   useEffect(() => {
@@ -598,14 +606,38 @@ export default function PoolDetails() {
     }
   }, [publicClient, pool?.baseToken.address, account?.address, nftMirrorAddress])
 
-  const { data: baseTokenBalance, refetch: refetchBaseTokenBalance } = useBalance({
-    address: account.address,
-    token: pool?.baseToken.address as Address,
+  const { data: baseTokenBalance, refetch: refetchBaseTokenBalance } = useQuery({
+    queryKey: ['tokenBalance', chainId, account.address, pool?.baseToken.address],
+    enabled: !!publicClient && !!account.address && !!pool?.baseToken.address,
+    queryFn: async () => {
+      const tokenAddress = pool!.baseToken.address as Address
+      if (tokenAddress === zeroAddress) {
+        return publicClient!.getBalance({ address: account.address as Address })
+      }
+      return publicClient!.readContract({
+        address: tokenAddress,
+        abi: parseAbi(['function balanceOf(address) view returns (uint256)']),
+        functionName: 'balanceOf',
+        args: [account.address as Address],
+      }) as Promise<bigint>
+    },
   })
 
-  const { data: quoteTokenBalance, refetch: refetchQuoteTokenBalance } = useBalance({
-    address: account.address,
-    token: pool?.quoteToken.address as Address,
+  const { data: quoteTokenBalance, refetch: refetchQuoteTokenBalance } = useQuery({
+    queryKey: ['tokenBalance', chainId, account.address, pool?.quoteToken.address],
+    enabled: !!publicClient && !!account.address && !!pool?.quoteToken.address,
+    queryFn: async () => {
+      const tokenAddress = pool!.quoteToken.address as Address
+      if (tokenAddress === zeroAddress) {
+        return publicClient!.getBalance({ address: account.address as Address })
+      }
+      return publicClient!.readContract({
+        address: tokenAddress,
+        abi: parseAbi(['function balanceOf(address) view returns (uint256)']),
+        functionName: 'balanceOf',
+        args: [account.address as Address],
+      }) as Promise<bigint>
+    },
   })
 
   const safeRefetch = async (refetchFn: () => Promise<unknown>, label: string) => {
@@ -664,6 +696,20 @@ export default function PoolDetails() {
     chainId,
     verifyingContract: permit2Address,
   })
+
+  function getCurrencyAddress(address: Address): Address {
+    if (address === zeroAddress) {
+      return addresses.weth || zeroAddress
+    }
+    return address
+  }
+
+  function getTokenInAddress(): Address | null {
+    if (!pool) return null
+    const baseTokenAddress = getCurrencyAddress(pool.baseToken.address as Address)
+    const quoteTokenAddress = getCurrencyAddress(pool.quoteToken.address as Address)
+    return isBuying ? quoteTokenAddress : baseTokenAddress
+  }
 
   // Detect tokenIn decimals for correct amount parsing
   useEffect(() => {
@@ -784,14 +830,6 @@ export default function PoolDetails() {
     }
   }
 
-  // Helper: resolve tokenIn address for current buy/sell direction
-  const getTokenInAddress = (): Address | null => {
-    if (!pool) return null
-    const baseTokenAddress = getCurrencyAddress(pool.baseToken.address as Address)
-    const quoteTokenAddress = getCurrencyAddress(pool.quoteToken.address as Address)
-    return isBuying ? quoteTokenAddress : baseTokenAddress
-  }
-
   // Pre-check allowance or permit requirement when selling
   useEffect(() => {
     const check = async () => {
@@ -850,15 +888,6 @@ export default function PoolDetails() {
     check()
   }, [amount, isBuying, pool?.address, account.address, publicClient, chainId])
 
-  // Helper function to properly handle currency addresses and sorting
-  const getCurrencyAddress = (address: Address): Address => {
-    // If it's the zero address, replace with WETH
-    if (address === zeroAddress) {
-      return addresses.weth || zeroAddress
-    }
-    return address
-  }
-  
   // Helper function to encode the path for V3 swaps
   const encodePath = (path: Address[], fee: number): Hex => {
     const FEE_SIZE = 3
@@ -1574,7 +1603,9 @@ export default function PoolDetails() {
   // Keep user's NFT list up-to-date whenever address or nftAddress changes
   useEffect(() => {
     if (!nftAddress || !account?.address) return
-    refreshUserNfts()
+    queueMicrotask(() => {
+      void refreshUserNfts()
+    })
   }, [nftAddress, account?.address])
 
   // DN404 freeze helpers and actions
@@ -1843,14 +1874,14 @@ export default function PoolDetails() {
       // When buying base token, use quote token balance
       if (pool.quoteToken.address === zeroAddress) {
         // ETH balance
-        setAmount(formatEther(quoteTokenBalance?.value ?? 0n))
+        setAmount(formatEther(quoteTokenBalance ?? 0n))
       } else {
         // ERC20 balance
-        setAmount(formatEther(quoteTokenBalance?.value ?? 0n))
+        setAmount(formatEther(quoteTokenBalance ?? 0n))
       }
     } else {
       // When selling base token, use base token balance
-      setAmount(formatEther(baseTokenBalance?.value ?? 0n))
+      setAmount(formatEther(baseTokenBalance ?? 0n))
     }
   }
 
@@ -2046,8 +2077,8 @@ export default function PoolDetails() {
                 <div>
                   <p className="text-sm text-muted-foreground">{pool.baseToken.symbol} (ERC20)</p>
                   <p className="text-lg">
-                    {baseTokenBalance?.formatted
-                      ? `${Number(baseTokenBalance.formatted).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${pool.baseToken.symbol}`
+                    {baseTokenBalance
+                      ? `${Number(formatUnits(baseTokenBalance, baseDecimals)).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${pool.baseToken.symbol}`
                       : `0 ${pool.baseToken.symbol}`}
                   </p>
                 </div>
@@ -2094,8 +2125,8 @@ export default function PoolDetails() {
             <div className="mt-2 text-xs text-muted-foreground flex items-center gap-4 justify-end">
               <span>
                 Balance: <span className="text-foreground font-medium">
-                  {baseTokenBalance?.formatted
-                    ? `${Number(baseTokenBalance.formatted).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${pool.baseToken.symbol}`
+                  {baseTokenBalance
+                    ? `${Number(formatUnits(baseTokenBalance, baseDecimals)).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${pool.baseToken.symbol}`
                     : `0 ${pool.baseToken.symbol}`}
                 </span>
               </span>
