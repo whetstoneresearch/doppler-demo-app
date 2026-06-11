@@ -1,6 +1,6 @@
 # Doppler V4 Miniapp
 
-This is a demo app for the Doppler protocol. It showcases deploying and interacting with Doppler auctions (static/V3 and dynamic/V4), quoting trades, among other unique features, including Doppler404 (aka DN404, or hybrid NFT+ERC20 tokens) launches. Notably, it uses the latest [doppler-sdk-alpha](https://github.com/whetstoneresearch/doppler-sdk-alpha) which provides a unified interface and singular package to install to manage Doppler integrations, regardless of which type of auction integrators wish to use.
+This is a demo app for the Doppler protocol. It showcases deploying and interacting with Doppler auctions on EVM, plus devnet Solana launches and CPMM pool reads. It uses `@whetstone-research/doppler-sdk@1.0.22` through the EVM and Solana package entrypoints.
 
 - Doppler protocol on GitHub: https://github.com/whetstoneresearch/doppler
 
@@ -13,9 +13,19 @@ pnpm install
 pnpm dev 
 ```
 
+Optional Solana configuration:
+
+```
+VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
+VITE_SOLANA_INDEXER_URL=https://your-solana-indexer.example
+VITE_DOPPLER_API_URL=https://your-doppler-api.example
+VITE_DOPPLER_API_KEY=...
+```
+
 ## What This Demo Uses From the [SDK](https://github.com/whetstoneresearch/doppler-sdk-alpha)
 
 - **`DopplerSDK.factory`**: unified entry to create static (V3) and dynamic (V4) auctions.
+- **Solana SDK entrypoint**: `@whetstone-research/doppler-sdk/solana` for devnet initializer and CPMM account reads.
 - **Builder pattern**: `StaticAuctionBuilder` and `DynamicAuctionBuilder` to construct deployments.
 - **Quoter**: high-level quoting for V2/V3 and a V4 fallback.
 - **DopplerLens**: ABI-driven quoting path for dynamic auctions.
@@ -131,7 +141,7 @@ const quoteV3 = await quoter.quoteExactInputV3({
 ### Addresses
 
 ```ts
-import { getAddresses } from "@whetstone-research/doppler-sdk";
+import { getAddresses } from "@whetstone-research/doppler-sdk/evm";
 
 const addresses = getAddresses(84532); // or your chainId
 ```
