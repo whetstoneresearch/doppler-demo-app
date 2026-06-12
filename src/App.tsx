@@ -1,13 +1,12 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { WagmiProvider } from 'wagmi'
 import { config } from './lib/wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import AllPools from './pages/AllPools'
-import CreatePool from './pages/CreatePool'
+import CreateMarket from './pages/CreateMarket'
 import PoolDetails from './pages/PoolDetails'
 import QuoteDebug from './pages/QuoteDebug'
 import SolanaMarkets from './pages/SolanaMarkets'
-import CreateSolanaLaunch from './pages/CreateSolanaLaunch'
 import SolanaLaunchDetails from './pages/SolanaLaunchDetails'
 import SolanaPoolDetails from './pages/SolanaPoolDetails'
 import { Navbar } from './components/ui/navbar'
@@ -27,11 +26,11 @@ function App() {
                 <main className="container mx-auto">
                   <Routes>
                     <Route path="/" element={<AllPools />} />
-                    <Route path="/create" element={<CreatePool />} />
+                    <Route path="/create" element={<CreateMarket />} />
                     <Route path="/pool/:address" element={<PoolDetails />} />
                     <Route path="/debug/quote" element={<QuoteDebug />} />
                     <Route path="/solana" element={<SolanaMarkets />} />
-                    <Route path="/solana/create" element={<CreateSolanaLaunch />} />
+                    <Route path="/solana/create" element={<Navigate to="/create?chain=solana" replace />} />
                     <Route path="/solana/launch/:address" element={<SolanaLaunchDetails />} />
                     <Route path="/solana/pool/:address" element={<SolanaPoolDetails />} />
                   </Routes>

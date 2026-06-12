@@ -121,7 +121,7 @@ export default function SolanaMarkets() {
           <p className="mt-2 text-muted-foreground">Devnet launches and CPMM pools from Doppler Solana programs.</p>
         </div>
         <Button asChild>
-          <Link to="/solana/create">Create Solana Launch</Link>
+          <Link to="/create?chain=solana">Create Solana Launch</Link>
         </Button>
       </div>
 

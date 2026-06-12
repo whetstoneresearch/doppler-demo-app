@@ -1,20 +1,30 @@
-import { address, createSolanaRpc, type Address } from '@solana/kit'
+import {
+  address,
+  createSolanaRpc,
+  createSolanaRpcSubscriptions,
+  type Address,
+} from '@solana/kit'
 import { deriveSolanaCpmmDeployment } from '@whetstone-research/doppler-sdk/solana'
 
 export const SOLANA_CHAIN = 'solana:devnet'
 export const SOLANA_NETWORK = 'devnet'
-export const SOLANA_TOKEN_DECIMALS = 9
+export const SOLANA_TOKEN_DECIMALS = 6
 export const SOLANA_DEFAULT_SLIPPAGE_BPS = 50
 export const WSOL_MINT = address('So11111111111111111111111111111111111111112')
 
 export const SOLANA_RPC_URL =
   import.meta.env.VITE_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com'
 
+export const SOLANA_RPC_SUBSCRIPTIONS_URL = SOLANA_RPC_URL.replace(/^http/, 'ws')
+
 export const SOLANA_INDEXER_URL = (
   import.meta.env.VITE_SOLANA_INDEXER_URL ?? ''
 ).replace(/\/$/, '')
 
 export const solanaRpc = createSolanaRpc(SOLANA_RPC_URL)
+export const solanaRpcSubscriptions = createSolanaRpcSubscriptions(
+  SOLANA_RPC_SUBSCRIPTIONS_URL,
+)
 
 export const solanaDeploymentPromise = deriveSolanaCpmmDeployment()
 

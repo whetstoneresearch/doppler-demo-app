@@ -28,7 +28,11 @@ const dn404Abi = [
 const CHAIN_ID = 84532 as const
 const ADDRESSES = getAddresses(CHAIN_ID)
 
-export default function CreatePool() {
+interface CreatePoolProps {
+  embedded?: boolean
+}
+
+export default function CreatePool({ embedded = false }: CreatePoolProps) {
   const account = useAccount()
   const { data: walletClient } = useWalletClient()
   const publicClient = usePublicClient()
@@ -1011,9 +1015,11 @@ export default function CreatePool() {
   }
 
   return (
-    <div className="p-8">
+    <div className={embedded ? "" : "p-8"}>
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-4xl font-bold mb-8 text-primary">Create New Pool</h1>
+        {!embedded && (
+          <h1 className="text-4xl font-bold mb-8 text-primary">Create New Pool</h1>
+        )}
         <div className="border border-primary/20 rounded-lg p-6 bg-card/50 backdrop-blur">
           <form onSubmit={handleFormSubmit} className="space-y-6">
             {/* Creation Type selector */}

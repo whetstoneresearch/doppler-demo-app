@@ -12,6 +12,7 @@ import {
   type TransactionSigner,
 } from '@solana/kit'
 import type { Wallet, WalletAccount } from '@wallet-standard/base'
+import { getWallets } from '@wallet-standard/app'
 import { SolanaSignTransaction } from '@solana/wallet-standard-features'
 import { SOLANA_CHAIN } from './config'
 import {
@@ -20,36 +21,31 @@ import {
   type SolanaWalletContextValue,
 } from './wallet-context'
 
-type WalletRegistry = {
-  get?: () => readonly Wallet[]
-  on?: (event: 'register', listener: (wallet: Wallet) => void) => () => void
-}
-
-function getWalletRegistry(): WalletRegistry | null {
-  if (typeof window === 'undefined') return null
-  const navigatorWithWallets = window.navigator as Navigator & {
-    wallets?: WalletRegistry
-  }
-  return navigatorWithWallets.wallets ?? null
+function supportsSolanaChain(chains: readonly string[]): boolean {
+  return chains.some((chain) => chain.startsWith('solana:'))
 }
 
 function isSolanaWallet(wallet: Wallet): wallet is SolanaStandardWallet {
   return (
-    wallet.chains.some((chain) => chain === SOLANA_CHAIN || chain === 'solana:mainnet') &&
+    supportsSolanaChain(wallet.chains) &&
     'standard:connect' in wallet.features &&
     SolanaSignTransaction in wallet.features
   )
 }
 
 function getSolanaWallets(): SolanaStandardWallet[] {
-  const wallets = getWalletRegistry()?.get?.() ?? []
-  return wallets.filter(isSolanaWallet)
+  if (typeof window === 'undefined') return []
+  return getWallets().get().filter(isSolanaWallet)
 }
 
 function createTransactionSigner(
   wallet: SolanaStandardWallet,
   account: WalletAccount,
 ): TransactionSigner {
+  const signingChain = account.chains.includes(SOLANA_CHAIN)
+    ? SOLANA_CHAIN
+    : account.chains.find((chain) => chain.startsWith('solana:'))
+
   return {
     address: address(account.address),
     signTransactions: async (transactions) => {
@@ -60,7 +56,7 @@ function createTransactionSigner(
         transactions.map(async (transaction) => {
           const [signed] = await wallet.features[SolanaSignTransaction].signTransaction({
             account,
-            chain: SOLANA_CHAIN,
+            chain: signingChain,
             transaction: new Uint8Array(encoder.encode(transaction)),
           })
           if (!signed) {
@@ -90,9 +86,15 @@ export function SolanaWalletProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setWallets(getSolanaWallets())
 
-    return getWalletRegistry()?.on?.('register', () => {
-      setWallets(getSolanaWallets())
-    })
+    const walletsApi = getWallets()
+    const refreshWallets = () => setWallets(getSolanaWallets())
+    const offRegister = walletsApi.on('register', refreshWallets)
+    const offUnregister = walletsApi.on('unregister', refreshWallets)
+
+    return () => {
+      offRegister()
+      offUnregister()
+    }
   }, [])
 
   const connect = useCallback(
@@ -108,11 +110,11 @@ export function SolanaWalletProvider({ children }: { children: ReactNode }) {
       try {
         const result = await selectedWallet.features['standard:connect'].connect()
         const connectedAccount = result.accounts.find((candidate) =>
-          candidate.chains.includes(SOLANA_CHAIN),
+          supportsSolanaChain(candidate.chains),
         )
 
         if (!connectedAccount) {
-          throw new Error('Connected wallet does not expose a devnet Solana account')
+          throw new Error('Connected wallet does not expose a Solana account')
         }
 
         setWallet(selectedWallet)
