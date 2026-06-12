@@ -11,11 +11,11 @@ import { useAccount, usePublicClient, useBalance, useSwitchChain } from "wagmi"
 import { useWalletClient } from "wagmi"
 import { 
   Quoter,
-} from "@whetstone-research/doppler-sdk"
-import { getAddresses } from "@whetstone-research/doppler-sdk"
+} from "@whetstone-research/doppler-sdk/evm"
+import { getAddresses } from "@whetstone-research/doppler-sdk/evm"
 import { CommandBuilder, V4ActionBuilder, V4ActionType } from "doppler-router"
 import { dopplerLensQuoterAbi } from "@/lib/abis/dopplerLens"
-import { airlockAbi } from "@whetstone-research/doppler-sdk"
+import { airlockAbi } from "@whetstone-research/doppler-sdk/evm"
 
 
 // Minimal ABI for UniversalRouter execute function

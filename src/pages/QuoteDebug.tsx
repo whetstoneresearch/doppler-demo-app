@@ -4,8 +4,8 @@ import { Address, Hex, isAddress, parseUnits, zeroAddress } from 'viem'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { getAddresses as getUnifiedAddresses } from '@whetstone-research/doppler-sdk'
-import type { ChainAddresses } from '@whetstone-research/doppler-sdk'
+import { getAddresses as getUnifiedAddresses } from '@whetstone-research/doppler-sdk/evm'
+import type { ChainAddresses } from '@whetstone-research/doppler-sdk/evm'
 import { dopplerLensQuoterAbi } from '@/lib/abis/dopplerLens'
 
 type ChainOption = {

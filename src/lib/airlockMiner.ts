@@ -11,7 +11,7 @@ import {
 import {
   DERC20Bytecode,
   DopplerBytecode
-} from "@whetstone-research/doppler-sdk";
+} from "@whetstone-research/doppler-sdk/evm";
 
 const FLAG_MASK = BigInt(0x3fff);
 
